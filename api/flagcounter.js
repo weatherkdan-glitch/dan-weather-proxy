@@ -7,9 +7,10 @@ export default async function handler(req, res) {
     });
     const html = await response.text();
     
+    // Return middle section where data should be
     res.json({ 
       length: html.length,
-      sample: html.substring(0, 3000)
+      middle: html.substring(3000, 6000)
     });
   } catch(e) {
     res.json({ error: e.message });
