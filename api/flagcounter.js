@@ -2,7 +2,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 's-maxage=3600');
   
-  const countries = ['il', 'us', 'gb', 'ca', 'de'];
+  const countries = ['il', 'us', 'gb', 'ca', 'de', 'th', 'jp', 'nl', 'in', 'it', 'fr'];
   
   function parseSum(html) {
     const re = /(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+,\s+\d{4}[^<]*<\/[^>]+><\/td><td>[^>]+>(\d+)<\/td>/g;
