@@ -17,39 +17,33 @@ module.exports = async (req, res) => {
   const counterId = 'Kyq';
 
   try {
-    // Fetch monthly CSV from FlagCounter
-    const csvData = await fetchUrl(`https://s01.flagcounter.com/countries/${counterId}/csv/`);
+    const html = await fetchUrl(`https://s01.flagcounter.com/more/${counterId}/`);
 
     const monthly = {};
-    const lines = csvData.split('\n').slice(1);
-    for (const line of lines) {
-      const parts = line.split(',');
-      if (parts.length >= 3) {
-        const iso = parts[1].toLowerCase().trim().replace(/"/g, '');
-        const visitors = parseInt(parts[2].trim(), 10);
-        if (iso && !isNaN(visitors) && visitors > 0) {
-          monthly[iso] = visitors;
-        }
-      }
-    }
-
-    // Fetch today's stats from FlagCounter details page
-    const detailHtml = await fetchUrl(`https://s01.flagcounter.com/more/${counterId}/`);
-
     const daily = {};
+
+    // Find all table rows with flag images
     const rowRegex = /<tr[\s\S]*?<\/tr>/gi;
-    const rows = detailHtml.match(rowRegex) || [];
+    const rows = html.match(rowRegex) || [];
+
     for (const row of rows) {
+      // Look for flagcdn.com flag image
       const flagMatch = row.match(/flagcdn\.com\/[^/]+\/([a-z]{2})\.png/i);
       if (!flagMatch) continue;
       const iso = flagMatch[1].toLowerCase();
-      const cells = row.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [];
-      if (cells.length >= 2) {
-        const todayText = cells[1].replace(/<[^>]+>/g, '').trim();
-        const val = parseInt(todayText, 10);
-        if (!isNaN(val) && val > 0) {
-          daily[iso] = val;
-        }
+
+      // Extract all numbers from <td> cells
+      const cells = (row.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [])
+        .map(td => {
+          const text = td.replace(/<[^>]+>/g, '').replace(/,/g, '').trim();
+          return parseInt(text, 10);
+        });
+
+      // FlagCounter details page columns: Flag | Country | Today | Yesterday | This Week | This Month | Total
+      // Index:                                0       1        2         3           4            5       6
+      if (cells.length >= 6) {
+        if (!isNaN(cells[2]) && cells[2] > 0) daily[iso]   = cells[2];
+        if (!isNaN(cells[5]) && cells[5] > 0) monthly[iso] = cells[5];
       }
     }
 
