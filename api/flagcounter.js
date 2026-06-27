@@ -16,18 +16,15 @@ module.exports = async (req, res) => {
   const counterId = 'Kyq';
 
   try {
-    const html = await fetchUrl(`https://s01.flagcounter.com/more/${counterId}/`);
-
-    // Find lines with "il" (Israel) to see the row structure
-    const lines = html.split('\n');
-    const relevant = lines.filter(l => 
-      l.includes('/il/') || l.includes('Israel') || l.includes('il.png') ||
-      l.includes('<td') && l.match(/\d{3,}/)
-    ).slice(0, 30);
+    const [todayHtml, monthHtml] = await Promise.all([
+      fetchUrl(`https://s01.flagcounter.com/today/${counterId}/`),
+      fetchUrl(`https://s01.flagcounter.com/countries/${counterId}/`)
+    ]);
 
     res.status(200).json({
       ok: true,
-      relevant
+      today_sample: todayHtml.substring(0, 2000),
+      month_sample: monthHtml.substring(0, 2000)
     });
 
   } catch (err) {
