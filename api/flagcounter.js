@@ -18,10 +18,16 @@ module.exports = async (req, res) => {
   try {
     const html = await fetchUrl(`https://s01.flagcounter.com/more/${counterId}/`);
 
-    // Return first 3000 chars so we can see the structure
+    // Find lines with "il" (Israel) to see the row structure
+    const lines = html.split('\n');
+    const relevant = lines.filter(l => 
+      l.includes('/il/') || l.includes('Israel') || l.includes('il.png') ||
+      l.includes('<td') && l.match(/\d{3,}/)
+    ).slice(0, 30);
+
     res.status(200).json({
       ok: true,
-      debug: html.substring(0, 3000)
+      relevant
     });
 
   } catch (err) {
