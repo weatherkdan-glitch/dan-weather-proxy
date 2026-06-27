@@ -1,33 +1,30 @@
 const https = require('https');
 
-function fetchUrl(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(data));
-    }).on('error', reject);
-  });
-}
-
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 's-maxage=1800');
 
-  const counterId = 'Kyq';
-
-  try {
-    const [todayHtml, monthHtml] = await Promise.all([
-      fetchUrl(`https://s01.flagcounter.com/today/${counterId}/`),
-      fetchUrl(`https://s01.flagcounter.com/countries/${counterId}/`)
-    ]);
-
-    res.status(200).json({
-      ok: true,
-      today_sample: todayHtml.substring(0, 2000),
-      month_sample: monthHtml.substring(0, 2000)
+  return new Promise((resolve) => {
+    https.get('https://s01.flagcounter.com/countries/Kyq/csv/', (fcRes) => {
+      let data = '';
+      fcRes.on('data', chunk => data += chunk);
+      fcRes.on('end', () => {
+        const monthly = {};
+        const lines = data.split('\n').slice(1);
+        for (const line of lines) {
+          const parts = line.split(',');
+          if (parts.length >= 3) {
+            const iso = parts[1].toLowerCase().trim().replace(/"/g, '');
+            const val = parseInt(parts[2].trim(), 10);
+            if (iso && !isNaN(val)) monthly[iso] = val;
+          }
+        }
+        res.status(200).json({ ok: true, monthly, updated: new Date().toISOString() });
+        resolve();
+      });
+    }).on('error', (err) => {
+      res.status(500).json({ ok: false, error: err.message });
+      resolve();
     });
-
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
+  });
 };
