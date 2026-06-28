@@ -1,4 +1,5 @@
 const http = require('http');
+const { TextDecoder } = require('util');
 
 let cache = null;
 let cacheTime = 0;
@@ -17,12 +18,16 @@ function fetchStation() {
         'Host': '62.128.42.5',
       }
     };
+    const chunks = [];
     const req = http.get(options, (res) => {
-      const chunks = [];
       res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('latin1')));
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        const decoded = new TextDecoder('windows-1255').decode(buf);
+        resolve(decoded);
+      });
     });
-    req.on('error', (e) => resolve(null));
+    req.on('error', () => resolve(null));
     req.on('timeout', () => { req.destroy(); resolve(null); });
   });
 }
