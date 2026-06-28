@@ -37,10 +37,25 @@ function parseStation(html) {
 
   function afterNum(label) {
     for (let i = 0; i < cells.length; i++) {
-      if (cells[i] === label && cells[i+1]) return extractNum(cells[i+1]);
-      if (cells[i].includes(label) && cells[i+1]) return extractNum(cells[i+1]);
+      if (cells[i] === label || cells[i].includes(label)) {
+        if (cells[i+1]) return extractNum(cells[i+1]);
+      }
     }
     return null;
+  }
+
+  // High/Low pairs: "High X" "Low X" "high_val" "low_val"
+  function highLowPair(highLabel, lowLabel) {
+    for (let i = 0; i < cells.length - 3; i++) {
+      if ((cells[i] === highLabel || cells[i].includes(highLabel)) &&
+          (cells[i+1] === lowLabel || cells[i+1].includes(lowLabel))) {
+        return {
+          high: extractNum(cells[i+2]),
+          low:  extractNum(cells[i+3]),
+        };
+      }
+    }
+    return { high: null, low: null };
   }
 
   function before(label) {
@@ -73,19 +88,24 @@ function parseStation(html) {
     }
   }
 
+  const tempHL   = highLowPair('High Temperature',  'Low Temperature');
+  const dewHL    = highLowPair('High Dew Point',    'Low Dew Point');
+  const humHL    = highLowPair('High Humidity',     'Low Humidity');
+  const pressHL  = highLowPair('High Barometer',    'Low Barometer');
+
   return {
     temp:        afterNum('טמפרטורה'),
-    tempHigh:    afterNum('High Temperature'),
-    tempLow:     afterNum('Low Temperature'),
+    tempHigh:    tempHL.high,
+    tempLow:     tempHL.low,
     dew:         afterNum('נקודת הטל'),
-    dewHigh:     afterNum('High Dew Point'),
-    dewLow:      afterNum('Low Dew Point'),
+    dewHigh:     dewHL.high,
+    dewLow:      dewHL.low,
     humidity:    afterNum('לחות יחסית'),
-    humHigh:     afterNum('High Humidity'),
-    humLow:      afterNum('Low Humidity'),
+    humHigh:     humHL.high,
+    humLow:      humHL.low,
     pressure:    afterNum('לחץ אויר'),
-    pressHigh:   afterNum('High Barometer'),
-    pressLow:    afterNum('Low Barometer'),
+    pressHigh:   pressHL.high,
+    pressLow:    pressHL.low,
     rainToday:   afterNum('משקעים היום'),
     rainStorm:   afterNum('משקעים בפרק'),
     rainMonth:   afterNum('משקעים החודש'),
