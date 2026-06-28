@@ -27,7 +27,7 @@ function fetchStation() {
 
 function extractNum(s) {
   if (!s) return null;
-  const m = s.match(/-?\d+\.?\d*/);
+  const m = String(s).match(/-?\d+\.?\d*/);
   return m ? parseFloat(m[0]) : null;
 }
 
@@ -35,98 +35,68 @@ function parseStation(html) {
   const t = html.replace(/<[^>]+>/g, '§').replace(/&nbsp;/g, ' ');
   const cells = t.split('§').map(s => s.trim()).filter(Boolean);
 
-  // after: value is in cell AFTER label
-  function after(label) {
+  function afterNum(label) {
     for (let i = 0; i < cells.length; i++) {
       if (cells[i] === label && cells[i+1]) return extractNum(cells[i+1]);
-    }
-    return null;
-  }
-
-  // afterIncludes: looser match
-  function afterIncludes(label) {
-    for (let i = 0; i < cells.length; i++) {
       if (cells[i].includes(label) && cells[i+1]) return extractNum(cells[i+1]);
     }
     return null;
   }
 
-  // before: value is in cell BEFORE label
   function before(label) {
     for (let i = 1; i < cells.length; i++) {
-      if (cells[i] === label) return cells[i-1].trim();
-      if (cells[i].includes(label)) return cells[i-1].trim();
+      if (cells[i] === label || cells[i].includes(label)) return cells[i-1].trim();
     }
     return '';
   }
 
-  // afterStr: string value after label
-  function afterStr(label) {
-    for (let i = 0; i < cells.length; i++) {
-      if (cells[i] === label && cells[i+1]) return cells[i+1].trim();
-      if (cells[i].includes(label) && cells[i+1]) return cells[i+1].trim();
-    }
-    return '';
-  }
-
-  // Special: heatIndex current — "עומס" then "חום" then value
   function currentHeatIndex() {
     for (let i = 0; i < cells.length; i++) {
-      if (cells[i] === 'עומס' && cells[i+1] === 'חום' && cells[i+2]) {
-        return extractNum(cells[i+2]);
-      }
+      if (cells[i] === 'עומס' && cells[i+1] === 'חום' && cells[i+2]) return extractNum(cells[i+2]);
     }
     return null;
   }
 
-  // Special: heatIndex high — "High" "Heat" "Index" then value
   function highHeatIndex() {
     for (let i = 0; i < cells.length; i++) {
-      if (cells[i] === 'High' && cells[i+1] === 'Heat' && cells[i+2] === 'Index' && cells[i+3]) {
-        return extractNum(cells[i+3]);
-      }
+      if (cells[i] === 'High' && cells[i+1] === 'Heat' && cells[i+2] === 'Index' && cells[i+3]) return extractNum(cells[i+3]);
     }
     return null;
   }
 
-  // stationTime: before "Station Time"
-  const stationTime = before('Station Time');
-
-  // sunrise: cell[3] = "4:32", cell[4] = "18:52", cell[5] = "Sunrise Time"
-  // from cells: "4:32","18:52","Sunrise Time","Sunset Time"
   let sunrise = null, sunset = null;
   for (let i = 0; i < cells.length; i++) {
     if (cells[i] === 'Sunrise Time') {
-      sunrise = cells[i-2] || null; // "4:32"
-      sunset  = cells[i-1] || null; // "18:52"
+      sunrise = cells[i-2] || null;
+      sunset  = cells[i-1] || null;
       break;
     }
   }
 
   return {
-    temp:        afterIncludes('טמפרטורה'),
-    tempHigh:    extractNum(after('High Temperature')),
-    tempLow:     extractNum(after('Low Temperature')),
-    dew:         afterIncludes('נקודת הטל'),
-    dewHigh:     extractNum(after('High Dew Point')),
-    dewLow:      extractNum(after('Low Dew Point')),
-    humidity:    afterIncludes('לחות יחסית'),
-    humHigh:     extractNum(after('High Humidity')),
-    humLow:      extractNum(after('Low Humidity')),
-    pressure:    afterIncludes('לחץ אויר'),
-    pressHigh:   extractNum(after('High Barometer')),
-    pressLow:    extractNum(after('Low Barometer')),
-    rainToday:   afterIncludes('משקעים היום'),
-    rainStorm:   afterIncludes('משקעים בפרק'),
-    rainMonth:   afterIncludes('משקעים החודש'),
-    rainSeason:  afterIncludes('משקעים מתחילת העונה'),
-    windChill:   afterIncludes('השפעת הצינון של הרוח'),
-    windHigh:    extractNum(after('High Wind Speed')),
+    temp:        afterNum('טמפרטורה'),
+    tempHigh:    afterNum('High Temperature'),
+    tempLow:     afterNum('Low Temperature'),
+    dew:         afterNum('נקודת הטל'),
+    dewHigh:     afterNum('High Dew Point'),
+    dewLow:      afterNum('Low Dew Point'),
+    humidity:    afterNum('לחות יחסית'),
+    humHigh:     afterNum('High Humidity'),
+    humLow:      afterNum('Low Humidity'),
+    pressure:    afterNum('לחץ אויר'),
+    pressHigh:   afterNum('High Barometer'),
+    pressLow:    afterNum('Low Barometer'),
+    rainToday:   afterNum('משקעים היום'),
+    rainStorm:   afterNum('משקעים בפרק'),
+    rainMonth:   afterNum('משקעים החודש'),
+    rainSeason:  afterNum('משקעים מתחילת העונה'),
+    windChill:   afterNum('השפעת הצינון של הרוח'),
+    windHigh:    afterNum('High Wind Speed'),
     heatIndex:   currentHeatIndex(),
     heatHigh:    highHeatIndex(),
     windStr:     before('Wind Direction and Speed'),
     pressStr:    before('Barometer and trend'),
-    stationTime: stationTime,
+    stationTime: before('Station Time'),
     sunrise:     sunrise,
     sunset:      sunset,
   };
