@@ -1,7 +1,7 @@
 const CODE  = 'Kyq';
 const HOST  = 'https://s01.flagcounter.com';
 const TTL   = 30 * 60 * 1000;
-const TOP_N = 12;
+const TOP_N = 30;
 let _cache = null, _cacheAt = 0;
 
 async function getText(url) {
