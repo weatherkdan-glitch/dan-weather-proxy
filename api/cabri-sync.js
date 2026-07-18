@@ -19,10 +19,6 @@ function extractHidden(html, name) {
   return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"') : '';
 }
 
-// NOTE: earlier assumption that submitted form values needed windows-1255 byte
-// encoding was WRONG (confirmed by a garbled "????" echoed username + "wrong
-// username/password" error). The site serves pages in windows-1255 but its
-// ASP.NET form parser reads posted data as plain UTF-8, so we just standard-encode.
 function toFormEncoded(str) {
   return encodeURIComponent(str);
 }
@@ -110,25 +106,19 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
 
-    const { res: loginRes, body: loginBodyResp } = await fetchWithCookies(LOGIN_POST_URL, jar, {
+    // The site responds to the login POST with a 302 redirect that carries the auth
+    // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
+    // manual cookie header, losing the session. So we capture the 302 directly
+    // (redirect: 'manual') and follow it ourselves with cookies attached.
+    const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: loginBody,
     });
-    push('DEBUG login POST status: ' + loginRes.status);
-    const rawSetCookie = typeof loginRes.headers.getSetCookie === 'function'
-      ? loginRes.headers.getSetCookie()
-      : loginRes.headers.get('set-cookie');
-    push('DEBUG raw Set-Cookie on login POST: ' + JSON.stringify(rawSetCookie));
-    push('DEBUG cookie jar after login POST: ' + JSON.stringify(jar));
-    push('DEBUG login POST body has error text: ' + (loginBodyResp.includes('שגוי') || loginBodyResp.includes('שגיאה')));
-    const midIdx = loginBodyResp.indexOf('username');
-    push('DEBUG login POST body around form: ' + loginBodyResp.slice(Math.max(0, midIdx - 200), midIdx + 600).replace(/\s+/g, ' '));
+    if (loginRes.status !== 302) push('WARNING: unexpected login status ' + loginRes.status);
 
     const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
-    push('DEBUG ratePage length: ' + ratePage.length);
-    push('DEBUG ratePage looks like login page: ' + ratePage.includes('שם משתמש'));
     const viewState2 = extractHidden(ratePage, '__VIEWSTATE');
     const viewStateGen2 = extractHidden(ratePage, '__VIEWSTATEGENERATOR');
     const eventValidation2 = extractHidden(ratePage, '__EVENTVALIDATION');
