@@ -58,7 +58,7 @@ function cookieHeader(jar) {
 async function fetchWithCookies(url, jar, options = {}) {
   const res = await fetch(url, {
     ...options,
-    redirect: 'follow',
+    redirect: options.redirect || 'follow',
     headers: {
       ...(options.headers || {}),
       cookie: cookieHeader(jar),
@@ -120,17 +120,19 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$password': PASSWORD,
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
-    const { body: afterLogin } = await fetchWithCookies(LOGIN_POST_URL, jar, {
+
+    // The site responds to the login POST with a 302 redirect that carries the auth
+    // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
+    // manual cookie header, losing the session. So we capture the 302 directly
+    // (redirect: 'manual') and follow it ourselves with cookies attached.
+    const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
+      redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: loginBody,
     });
-    if (!afterLogin.includes('התנתק')) {
-      push('WARNING: login may have failed (no logout link found). Continuing anyway.');
-      push('DEBUG login response length: ' + afterLogin.length);
-      push('DEBUG login response snippet: ' + afterLogin.slice(0, 400).replace(/\s+/g, ' '));
-      push('DEBUG cookie jar keys: ' + Object.keys(jar).join(', '));
-    }
+    push('DEBUG login POST status: ' + loginRes.status);
+    push('DEBUG cookie jar keys after login POST: ' + Object.keys(jar).join(', '));
 
     const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
     push('DEBUG ratePage length: ' + ratePage.length);
