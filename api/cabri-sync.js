@@ -69,7 +69,7 @@ async function fetchWithCookies(url, jar, options = {}) {
     ? res.headers.getSetCookie()
     : res.headers.get('set-cookie');
   mergeCookies(jar, setCookies);
-  const body = await res.text();
+  const body = await res.clone().text().catch(() => '');
   return { res, body };
 }
 
@@ -125,7 +125,7 @@ module.exports = async (req, res) => {
     // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
     // manual cookie header, losing the session. So we capture the 302 directly
     // (redirect: 'manual') and follow it ourselves with cookies attached.
-    const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
+    const { res: loginRes, body: loginBodyResp } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -133,6 +133,7 @@ module.exports = async (req, res) => {
     });
     push('DEBUG login POST status: ' + loginRes.status);
     push('DEBUG cookie jar keys after login POST: ' + Object.keys(jar).join(', '));
+    push('DEBUG login POST body snippet: ' + loginBodyResp.slice(0, 800).replace(/\s+/g, ' '));
 
     const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
     push('DEBUG ratePage length: ' + ratePage.length);
