@@ -1,16 +1,6 @@
 // api/cabri-sync.js
 // Vercel Serverless Function — run daily via Vercel Cron (see vercel.json).
 // Submits YESTERDAY's total rain (mm) to rain.cabri.org.il/Dan automatically.
-//
-// Add this file to the SAME GitHub repo you already deploy to Vercel for
-// dan-weather-proxy (e.g. api/cabri-sync.js), add/merge the vercel.json
-// below, push to GitHub, and Vercel will run it once a day automatically.
-//
-// Env vars (set in Vercel dashboard -> Project -> Settings -> Environment
-// Variables, NOT hardcoded in code, so the password isn't in your repo):
-//   CABRI_USERNAME = דודי
-//   CABRI_PASSWORD = 12245
-//   WEATHER_LOG_URL = http://62.128.42.5/~dan/weather-log.json
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
 const GETRAIN_URL = 'https://rain.cabri.org.il/Dan/Admin/GetRain';
@@ -22,7 +12,6 @@ function extractHidden(html, name) {
   return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"') : '';
 }
 
-// A tiny manual cookie jar since fetch() doesn't manage cookies across requests server-side.
 function mergeCookies(jar, setCookieHeaders) {
   if (!setCookieHeaders) return jar;
   const list = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
@@ -47,7 +36,6 @@ async function fetchWithCookies(url, jar, options = {}) {
       'user-agent': 'Mozilla/5.0 (compatible; DanWeatherSync/1.0)',
     },
   });
-  // Node's fetch (undici) exposes multiple Set-Cookie via getSetCookie() when available
   const setCookies = typeof res.headers.getSetCookie === 'function'
     ? res.headers.getSetCookie()
     : res.headers.get('set-cookie');
@@ -65,7 +53,6 @@ module.exports = async (req, res) => {
     const PASSWORD = process.env.CABRI_PASSWORD || '12245';
     const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'http://62.128.42.5/~dan/weather-log.json';
 
-    // 1) Yesterday's rain total from the station's own log
     const logResp = await fetch(WEATHER_LOG_URL, { headers: { 'user-agent': 'Mozilla/5.0' } });
     if (!logResp.ok) throw new Error('Could not fetch weather-log.json: ' + logResp.status);
     const points = await logResp.json();
@@ -90,7 +77,6 @@ module.exports = async (req, res) => {
     }
     push(`Yesterday (${yesterdayDMY}) rain total: ${maxRain} mm`);
 
-    // 2) Login
     const jar = {};
     const { body: loginPage } = await fetchWithCookies(LOGIN_URL, jar);
     const viewState = extractHidden(loginPage, '__VIEWSTATE');
@@ -112,10 +98,15 @@ module.exports = async (req, res) => {
     });
     if (!afterLogin.includes('התנתק')) {
       push('WARNING: login may have failed (no logout link found). Continuing anyway.');
+      push('DEBUG login response length: ' + afterLogin.length);
+      push('DEBUG login response snippet: ' + afterLogin.slice(0, 400).replace(/\s+/g, ' '));
+      push('DEBUG cookie jar keys: ' + Object.keys(jar).join(', '));
     }
 
-    // 3) Load GetRain admin page (fresh tokens + current values)
     const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
+    push('DEBUG ratePage length: ' + ratePage.length);
+    push('DEBUG ratePage looks like login page: ' + ratePage.includes('שם משתמש'));
+    push('DEBUG ratePage snippet: ' + ratePage.slice(0, 400).replace(/\s+/g, ' '));
     const viewState2 = extractHidden(ratePage, '__VIEWSTATE');
     const viewStateGen2 = extractHidden(ratePage, '__VIEWSTATEGENERATOR');
     const eventValidation2 = extractHidden(ratePage, '__EVENTVALIDATION');
