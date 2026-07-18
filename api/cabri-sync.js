@@ -12,6 +12,29 @@ function extractHidden(html, name) {
   return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"') : '';
 }
 
+// Cabri's site is served as windows-1255 (old Israeli Hebrew codepage); its <form>
+// therefore expects submitted field VALUES percent-encoded as windows-1255 bytes,
+// not UTF-8. Hebrew letters (U+05D0-U+05EA) map linearly to bytes 0xE0-0xFA in that
+// codepage, so we convert accordingly instead of using UTF-8 percent-encoding.
+function toFormEncoded(str) {
+  if (/^[\x00-\x7F]*$/.test(str)) return encodeURIComponent(str);
+  let out = '';
+  for (const ch of str) {
+    const code = ch.codePointAt(0);
+    if (code <= 0x7F) out += encodeURIComponent(ch);
+    else if (code >= 0x05D0 && code <= 0x05EA) out += '%' + (code - 0x05D0 + 0xE0).toString(16).toUpperCase();
+    else if (code === 0x05F3) out += '%AE';
+    else if (code === 0x05F4) out += '%BF';
+    else if (code === 0x20AA) out += '%A4';
+    else out += encodeURIComponent(ch);
+  }
+  return out;
+}
+function buildFormBody(fields) {
+  return Object.entries(fields).map(([k, v]) => encodeURIComponent(k) + '=' + toFormEncoded(String(v))).join('&');
+}
+
+// A tiny manual cookie jar since fetch() doesn't manage cookies across requests server-side.
 function mergeCookies(jar, setCookieHeaders) {
   if (!setCookieHeaders) return jar;
   const list = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
@@ -83,7 +106,7 @@ module.exports = async (req, res) => {
     const viewStateGen = extractHidden(loginPage, '__VIEWSTATEGENERATOR');
     const eventValidation = extractHidden(loginPage, '__EVENTVALIDATION');
 
-    const loginBody = new URLSearchParams({
+    const loginBody = buildFormBody({
       __VIEWSTATE: viewState,
       __VIEWSTATEGENERATOR: viewStateGen,
       __EVENTVALIDATION: eventValidation,
@@ -94,7 +117,7 @@ module.exports = async (req, res) => {
     const { body: afterLogin } = await fetchWithCookies(LOGIN_URL, jar, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: loginBody.toString(),
+      body: loginBody,
     });
     if (!afterLogin.includes('התנתק')) {
       push('WARNING: login may have failed (no logout link found). Continuing anyway.');
@@ -136,11 +159,11 @@ module.exports = async (req, res) => {
 
     postFields['ctl00$contentPlaceHolder$saveBtn'] = 'שמור';
 
-    const saveBody = new URLSearchParams(postFields);
+    const saveBody = buildFormBody(postFields);
     await fetchWithCookies(GETRAIN_URL, jar, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: saveBody.toString(),
+      body: saveBody,
     });
 
     push(`Submitted ${maxRain} mm for ${yesterdayDMY} to Cabri. Done.`);
