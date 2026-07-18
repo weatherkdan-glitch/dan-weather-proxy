@@ -1,8 +1,15 @@
 // api/cabri-sync.js
 // Vercel Serverless Function — run daily via Vercel Cron (see vercel.json).
 // Submits YESTERDAY's total rain (mm) to rain.cabri.org.il/Dan automatically.
+//
+// Env vars (set in Vercel dashboard -> Project -> Settings -> Environment
+// Variables, NOT hardcoded in code, so the password isn't in your repo):
+//   CABRI_USERNAME = דודי
+//   CABRI_PASSWORD = 12245
+//   WEATHER_LOG_URL = http://62.128.42.5/~dan/weather-log.json
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
+const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
 const GETRAIN_URL = 'https://rain.cabri.org.il/Dan/Admin/GetRain';
 
 function extractHidden(html, name) {
@@ -34,7 +41,6 @@ function buildFormBody(fields) {
   return Object.entries(fields).map(([k, v]) => encodeURIComponent(k) + '=' + toFormEncoded(String(v))).join('&');
 }
 
-// A tiny manual cookie jar since fetch() doesn't manage cookies across requests server-side.
 function mergeCookies(jar, setCookieHeaders) {
   if (!setCookieHeaders) return jar;
   const list = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
@@ -114,7 +120,7 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$password': PASSWORD,
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
-    const { body: afterLogin } = await fetchWithCookies(LOGIN_URL, jar, {
+    const { body: afterLogin } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: loginBody,
