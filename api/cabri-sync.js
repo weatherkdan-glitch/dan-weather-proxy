@@ -19,19 +19,12 @@ function extractHidden(html, name) {
   return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"') : '';
 }
 
+// NOTE: earlier assumption that submitted form values needed windows-1255 byte
+// encoding was WRONG (confirmed by a garbled "????" echoed username + "wrong
+// username/password" error). The site serves pages in windows-1255 but its
+// ASP.NET form parser reads posted data as plain UTF-8, so we just standard-encode.
 function toFormEncoded(str) {
-  if (/^[\x00-\x7F]*$/.test(str)) return encodeURIComponent(str);
-  let out = '';
-  for (const ch of str) {
-    const code = ch.codePointAt(0);
-    if (code <= 0x7F) out += encodeURIComponent(ch);
-    else if (code >= 0x05D0 && code <= 0x05EA) out += '%' + (code - 0x05D0 + 0xE0).toString(16).toUpperCase();
-    else if (code === 0x05F3) out += '%AE';
-    else if (code === 0x05F4) out += '%BF';
-    else if (code === 0x20AA) out += '%A4';
-    else out += encodeURIComponent(ch);
-  }
-  return out;
+  return encodeURIComponent(str);
 }
 function buildFormBody(fields) {
   return Object.entries(fields).map(([k, v]) => encodeURIComponent(k) + '=' + toFormEncoded(String(v))).join('&');
@@ -129,7 +122,6 @@ module.exports = async (req, res) => {
       : loginRes.headers.get('set-cookie');
     push('DEBUG raw Set-Cookie on login POST: ' + JSON.stringify(rawSetCookie));
     push('DEBUG cookie jar after login POST: ' + JSON.stringify(jar));
-    push('DEBUG login POST body snippet: ' + loginBodyResp.slice(0, 800).replace(/\s+/g, ' '));
     push('DEBUG login POST body has error text: ' + (loginBodyResp.includes('שגוי') || loginBodyResp.includes('שגיאה')));
     const midIdx = loginBodyResp.indexOf('username');
     push('DEBUG login POST body around form: ' + loginBodyResp.slice(Math.max(0, midIdx - 200), midIdx + 600).replace(/\s+/g, ' '));
@@ -137,7 +129,6 @@ module.exports = async (req, res) => {
     const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
     push('DEBUG ratePage length: ' + ratePage.length);
     push('DEBUG ratePage looks like login page: ' + ratePage.includes('שם משתמש'));
-    push('DEBUG ratePage snippet: ' + ratePage.slice(0, 400).replace(/\s+/g, ' '));
     const viewState2 = extractHidden(ratePage, '__VIEWSTATE');
     const viewStateGen2 = extractHidden(ratePage, '__VIEWSTATEGENERATOR');
     const eventValidation2 = extractHidden(ratePage, '__EVENTVALIDATION');
