@@ -19,10 +19,6 @@ function extractHidden(html, name) {
   return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"') : '';
 }
 
-// Cabri's site is served as windows-1255 (old Israeli Hebrew codepage); its <form>
-// therefore expects submitted field VALUES percent-encoded as windows-1255 bytes,
-// not UTF-8. Hebrew letters (U+05D0-U+05EA) map linearly to bytes 0xE0-0xFA in that
-// codepage, so we convert accordingly instead of using UTF-8 percent-encoding.
 function toFormEncoded(str) {
   if (/^[\x00-\x7F]*$/.test(str)) return encodeURIComponent(str);
   let out = '';
@@ -121,10 +117,6 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
 
-    // The site responds to the login POST with a 302 redirect that carries the auth
-    // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
-    // manual cookie header, losing the session. So we capture the 302 directly
-    // (redirect: 'manual') and follow it ourselves with cookies attached.
     const { res: loginRes, body: loginBodyResp } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
@@ -132,8 +124,15 @@ module.exports = async (req, res) => {
       body: loginBody,
     });
     push('DEBUG login POST status: ' + loginRes.status);
-    push('DEBUG cookie jar keys after login POST: ' + Object.keys(jar).join(', '));
+    const rawSetCookie = typeof loginRes.headers.getSetCookie === 'function'
+      ? loginRes.headers.getSetCookie()
+      : loginRes.headers.get('set-cookie');
+    push('DEBUG raw Set-Cookie on login POST: ' + JSON.stringify(rawSetCookie));
+    push('DEBUG cookie jar after login POST: ' + JSON.stringify(jar));
     push('DEBUG login POST body snippet: ' + loginBodyResp.slice(0, 800).replace(/\s+/g, ' '));
+    push('DEBUG login POST body has error text: ' + (loginBodyResp.includes('שגוי') || loginBodyResp.includes('שגיאה')));
+    const midIdx = loginBodyResp.indexOf('username');
+    push('DEBUG login POST body around form: ' + loginBodyResp.slice(Math.max(0, midIdx - 200), midIdx + 600).replace(/\s+/g, ' '));
 
     const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
     push('DEBUG ratePage length: ' + ratePage.length);
