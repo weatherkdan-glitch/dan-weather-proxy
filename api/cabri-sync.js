@@ -9,7 +9,7 @@
 //   WEATHER_LOG_URL = http://62.128.42.5/~dan/weather-log.json
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
-const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
+const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout';
 const GETRAIN_URL = 'https://rain.cabri.org.il/Dan/Admin/GetRain';
 
 function extractHidden(html, name) {
@@ -38,6 +38,17 @@ function mergeCookies(jar, setCookieHeaders) {
 }
 function cookieHeader(jar) {
   return Object.values(jar).join('; ');
+}
+
+const STATUS_URL = 'http://62.128.42.5/~dan/cabri-sync-status.php';
+async function reportStatus(message) {
+  try {
+    await fetch(STATUS_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+  } catch (e) { /* best-effort only, never fail the run because of this */ }
 }
 
 async function fetchWithCookies(url, jar, options = {}) {
@@ -106,10 +117,6 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
 
-    // The site responds to the login POST with a 302 redirect that carries the auth
-    // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
-    // manual cookie header, losing the session. So we capture the 302 directly
-    // (redirect: 'manual') and follow it ourselves with cookies attached.
     const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
@@ -156,9 +163,11 @@ module.exports = async (req, res) => {
     });
 
     push(`Submitted ${maxRain} mm for ${yesterdayDMY} to Cabri. Done.`);
+    await reportStatus(`SUCCESS — submitted ${maxRain} mm for ${yesterdayDMY}`);
     return res.status(200).json({ ok: true, log });
   } catch (err) {
     push('ERROR: ' + err.message);
+    await reportStatus(`FAILED — ${err.message}`);
     return res.status(500).json({ ok: false, log });
   }
 };
