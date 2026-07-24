@@ -9,7 +9,7 @@
 //   WEATHER_LOG_URL = http://62.128.42.5/~dan/weather-log.json
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
-const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout';
+const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
 const GETRAIN_URL = 'https://rain.cabri.org.il/Dan/Admin/GetRain';
 
 function extractHidden(html, name) {
@@ -41,14 +41,18 @@ function cookieHeader(jar) {
 }
 
 const STATUS_URL = 'http://62.128.42.5/~dan/cabri-sync-status.php';
-async function reportStatus(message) {
+async function reportStatus(message, log) {
   try {
-    await fetch(STATUS_URL, {
+    const r = await fetch(STATUS_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ message }),
     });
-  } catch (e) { /* best-effort only, never fail the run because of this */ }
+    const t = await r.text().catch(() => '');
+    if (log) log.push(`DEBUG reportStatus response: ${r.status} ${t.slice(0, 200)}`);
+  } catch (e) {
+    if (log) log.push(`DEBUG reportStatus failed: ${e.message}`);
+  }
 }
 
 async function fetchWithCookies(url, jar, options = {}) {
@@ -116,7 +120,6 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$password': PASSWORD,
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
-
     const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
@@ -163,11 +166,11 @@ module.exports = async (req, res) => {
     });
 
     push(`Submitted ${maxRain} mm for ${yesterdayDMY} to Cabri. Done.`);
-    await reportStatus(`SUCCESS — submitted ${maxRain} mm for ${yesterdayDMY}`);
+    await reportStatus(`SUCCESS — submitted ${maxRain} mm for ${yesterdayDMY}`, log);
     return res.status(200).json({ ok: true, log });
   } catch (err) {
     push('ERROR: ' + err.message);
-    await reportStatus(`FAILED — ${err.message}`);
+    await reportStatus(`FAILED — ${err.message}`, log);
     return res.status(500).json({ ok: false, log });
   }
 };
