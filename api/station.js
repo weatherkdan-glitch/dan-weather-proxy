@@ -1,28 +1,15 @@
-const http = require('http');
 const { TextDecoder } = require('util');
 
 let cache = null;
 let cacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000;
+const STATION_URL = 'http://cs44.box.co.il/~weatherd/ALL-dan-s.htm';
 
 function fetchStation() {
-  return new Promise((resolve) => {
-    const options = {
-      hostname: '62.128.42.5',
-      port: 80,
-      path: '/~dan/ALL-dan-s.htm',
-      method: 'GET',
-      timeout: 12000,
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Host': '62.128.42.5' }
-    };
-    const chunks = [];
-    const req = http.get(options, (res) => {
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve(new TextDecoder('windows-1255').decode(Buffer.concat(chunks))));
-    });
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-  });
+  return fetch(STATION_URL, { headers: { 'User-Agent': 'Mozilla/5.0' } })
+    .then(r => r.arrayBuffer())
+    .then(buf => new TextDecoder('windows-1255').decode(buf))
+    .catch(() => null);
 }
 
 function extractNum(s) {
@@ -44,7 +31,6 @@ function parseStation(html) {
     return null;
   }
 
-  // High/Low pairs: "High X" "Low X" "high_val" "low_val"
   function highLowPair(highLabel, lowLabel) {
     for (let i = 0; i < cells.length - 3; i++) {
       if ((cells[i] === highLabel || cells[i].includes(highLabel)) &&
