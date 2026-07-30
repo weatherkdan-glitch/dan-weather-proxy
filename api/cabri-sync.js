@@ -6,7 +6,7 @@
 // Variables, NOT hardcoded in code, so the password isn't in your repo):
 //   CABRI_USERNAME = דודי
 //   CABRI_PASSWORD = 12245
-//   WEATHER_LOG_URL = http://62.128.42.5/~dan/weather-log.json
+//   WEATHER_LOG_URL = http://cs44.box.co.il/~weatherd/weather-log.json
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
 const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
@@ -40,7 +40,7 @@ function cookieHeader(jar) {
   return Object.values(jar).join('; ');
 }
 
-const STATUS_URL = 'http://62.128.42.5/~dan/cabri-sync-status.php';
+const STATUS_URL = 'http://cs44.box.co.il/~weatherd/cabri-sync-status.php';
 async function reportStatus(message, log) {
   try {
     const r = await fetch(STATUS_URL, {
@@ -80,7 +80,7 @@ module.exports = async (req, res) => {
   try {
     const USERNAME = process.env.CABRI_USERNAME || 'דודי';
     const PASSWORD = process.env.CABRI_PASSWORD || '12245';
-    const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'http://62.128.42.5/~dan/weather-log.json';
+    const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'http://cs44.box.co.il/~weatherd/weather-log.json';
 
     const logResp = await fetch(WEATHER_LOG_URL, { headers: { 'user-agent': 'Mozilla/5.0' } });
     if (!logResp.ok) throw new Error('Could not fetch weather-log.json: ' + logResp.status);
