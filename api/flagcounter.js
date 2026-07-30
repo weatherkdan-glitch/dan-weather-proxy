@@ -1,60 +1,176 @@
-const CODE  = 'Kyq';
-const HOST  = 'https://s01.flagcounter.com';
-const TTL   = 30 * 60 * 1000;
-const TOP_N = 30;
-let _cache = null, _cacheAt = 0;
+// api/cabri-sync.js
+// Vercel Serverless Function — run daily via Vercel Cron (see vercel.json).
+// Submits YESTERDAY's total rain (mm) to rain.cabri.org.il/Dan automatically.
+//
+// Env vars (set in Vercel dashboard -> Project -> Settings -> Environment
+// Variables, NOT hardcoded in code, so the password isn't in your repo):
+//   CABRI_USERNAME = דודי
+//   CABRI_PASSWORD = 12245
+//   WEATHER_LOG_URL = http://cs44.box.co.il/~weatherd/weather-log.json
 
-async function getText(url) {
-  const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DanWeather/1.0)' } });
-  return r.text();
+const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
+const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
+const GETRAIN_URL = 'https://rain.cabri.org.il/Dan/Admin/GetRain';
+
+function extractHidden(html, name) {
+  const re1 = new RegExp(`name="${name}"[^>]*value="([^"]*)"`, 'i');
+  const re2 = new RegExp(`id="${name}"[^>]*value="([^"]*)"`, 'i');
+  const m = html.match(re1) || html.match(re2);
+  return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"') : '';
 }
-function parseTotals(html) {
-  const totals = {};
-  const re = new RegExp('([\\d,]+)\\s*(?:<[^>]*>\\s*)*<a[^>]*/detail30/([a-z]{2})/' + CODE, 'gi');
-  let m;
-  while ((m = re.exec(html))) {
-    const cc = m[2].toLowerCase();
-    const n  = parseInt(m[1].replace(/,/g, ''), 10);
-    if (!isNaN(n) && (totals[cc] == null || n > totals[cc])) totals[cc] = n;
+
+function toFormEncoded(str) {
+  return encodeURIComponent(str);
+}
+function buildFormBody(fields) {
+  return Object.entries(fields).map(([k, v]) => encodeURIComponent(k) + '=' + toFormEncoded(String(v))).join('&');
+}
+
+function mergeCookies(jar, setCookieHeaders) {
+  if (!setCookieHeaders) return jar;
+  const list = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
+  for (const sc of list) {
+    const pair = sc.split(';')[0];
+    const [name] = pair.split('=');
+    jar[name.trim()] = pair;
   }
-  return totals;
+  return jar;
 }
-function sum30(html) {
-  const text = html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ');
-  const re = /(?:Today|Yesterday|[A-Z][a-z]{2,8}\s+\d{1,2},\s*\d{4})\s+([\d,]+)/g;
-  let m, total = 0, count = 0;
-  while ((m = re.exec(text)) && count < 30) {
-    const n = parseInt(m[1].replace(/,/g, ''), 10);
-    if (!isNaN(n)) { total += n; count++; }
-  }
-  return total;
+function cookieHeader(jar) {
+  return Object.values(jar).join('; ');
 }
-function parseAvg30(html) {
-  const m = html.replace(/<[^>]*>/g, ' ').match(/30\s*day\s*average[:\s]*([\d,]+)/i);
-  return m ? parseInt(m[1].replace(/,/g, ''), 10) : null;
-}
-module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600');
+
+const STATUS_URL = 'http://cs44.box.co.il/~weatherd/cabri-sync-status.php';
+async function reportStatus(message, log) {
   try {
-    const now = Date.now();
-    if (_cache && now - _cacheAt < TTL) { res.status(200).json(_cache); return; }
-    const [p1, p2, overview] = await Promise.all([
-      getText(`${HOST}/countries/${CODE}`),
-      getText(`${HOST}/countries/${CODE}/2`).catch(() => ''),
-      getText(`${HOST}/more/${CODE}`).catch(() => ''),
-    ]);
-    const totals = Object.assign({}, parseTotals(p1), parseTotals(p2));
-    const avg30  = parseAvg30(overview);
-    const top = Object.keys(totals).sort((a, b) => totals[b] - totals[a]).slice(0, TOP_N);
-    const month30 = {};
-    await Promise.all(top.map(async (cc) => {
-      try { month30[cc] = sum30(await getText(`${HOST}/detail30/${cc}/${CODE}`)); } catch (e) {}
-    }));
-    _cache = { ok: true, totals, month30, avg30, updated: new Date().toISOString() };
-    _cacheAt = now;
-    res.status(200).json(_cache);
+    const r = await fetch(STATUS_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    const t = await r.text().catch(() => '');
+    if (log) log.push(`DEBUG reportStatus response: ${r.status} ${t.slice(0, 200)}`);
   } catch (e) {
-    res.status(200).json({ ok: false, error: String(e), totals: {}, month30: {} });
+    if (log) log.push(`DEBUG reportStatus failed: ${e.message}`);
+  }
+}
+
+async function fetchWithCookies(url, jar, options = {}) {
+  const res = await fetch(url, {
+    ...options,
+    redirect: options.redirect || 'follow',
+    headers: {
+      ...(options.headers || {}),
+      cookie: cookieHeader(jar),
+      'user-agent': 'Mozilla/5.0 (compatible; DanWeatherSync/1.0)',
+    },
+  });
+  const setCookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : res.headers.get('set-cookie');
+  mergeCookies(jar, setCookies);
+  const body = await res.clone().text().catch(() => '');
+  return { res, body };
+}
+
+module.exports = async (req, res) => {
+  const log = [];
+  const push = (msg) => { log.push(msg); console.log(msg); };
+
+  try {
+    const USERNAME = process.env.CABRI_USERNAME || 'דודי';
+    const PASSWORD = process.env.CABRI_PASSWORD || '12245';
+    const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'http://cs44.box.co.il/~weatherd/weather-log.json';
+
+    const logResp = await fetch(WEATHER_LOG_URL, { headers: { 'user-agent': 'Mozilla/5.0' } });
+    if (!logResp.ok) throw new Error('Could not fetch weather-log.json: ' + logResp.status);
+    const points = await logResp.json();
+
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
+    const y = yesterday.getFullYear(), m = yesterday.getMonth() + 1, d = yesterday.getDate();
+    const yesterdayYMD = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const yesterdayDMY = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+
+    let maxRain = null;
+    for (const p of points) {
+      if (p.t == null || p.rain == null) continue;
+      const pd = new Date(p.t);
+      const pYMD = `${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, '0')}-${String(pd.getDate()).padStart(2, '0')}`;
+      if (pYMD === yesterdayYMD && (maxRain === null || p.rain > maxRain)) maxRain = p.rain;
+    }
+
+    if (maxRain === null) {
+      push(`No log samples found for ${yesterdayYMD} — nothing to submit.`);
+      return res.status(200).json({ ok: true, log });
+    }
+    push(`Yesterday (${yesterdayDMY}) rain total: ${maxRain} mm`);
+
+    const jar = {};
+    const { body: loginPage } = await fetchWithCookies(LOGIN_URL, jar);
+    const viewState = extractHidden(loginPage, '__VIEWSTATE');
+    const viewStateGen = extractHidden(loginPage, '__VIEWSTATEGENERATOR');
+    const eventValidation = extractHidden(loginPage, '__EVENTVALIDATION');
+
+    const loginBody = buildFormBody({
+      __VIEWSTATE: viewState,
+      __VIEWSTATEGENERATOR: viewStateGen,
+      __EVENTVALIDATION: eventValidation,
+      'ctl00$contentPlaceHolder$lg$username': USERNAME,
+      'ctl00$contentPlaceHolder$lg$password': PASSWORD,
+      'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
+    });
+    const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: loginBody,
+    });
+    if (loginRes.status !== 302) push('WARNING: unexpected login status ' + loginRes.status);
+
+    const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
+    const viewState2 = extractHidden(ratePage, '__VIEWSTATE');
+    const viewStateGen2 = extractHidden(ratePage, '__VIEWSTATEGENERATOR');
+    const eventValidation2 = extractHidden(ratePage, '__EVENTVALIDATION');
+
+    const rowRe = /(\d{2}\/\d{2}\/\d{4})\s*<\/td>\s*<td[^>]*>\s*<input name="(ctl00\$contentPlaceHolder\$rainTbl\$ctl\d+\$millimeter)"[^>]*value="([^"]*)"/gs;
+    const rows = [...ratePage.matchAll(rowRe)];
+    if (rows.length === 0) throw new Error('Could not find any rain rows on the GetRain page (page structure may have changed).');
+
+    const postFields = {
+      __VIEWSTATE: viewState2,
+      __VIEWSTATEGENERATOR: viewStateGen2,
+      __EVENTVALIDATION: eventValidation2,
+    };
+
+    let found = false;
+    for (const row of rows) {
+      const [, rowDate, fieldName, currentValue] = row;
+      if (rowDate === yesterdayDMY) {
+        postFields[fieldName] = String(maxRain);
+        found = true;
+        push(`Setting ${fieldName} (${rowDate}) to ${maxRain} mm`);
+      } else {
+        postFields[fieldName] = currentValue;
+      }
+    }
+    if (!found) throw new Error(`Could not find a row for yesterday's date (${yesterdayDMY}) on the GetRain page.`);
+
+    postFields['ctl00$contentPlaceHolder$saveBtn'] = 'שמור';
+
+    const saveBody = buildFormBody(postFields);
+    await fetchWithCookies(GETRAIN_URL, jar, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: saveBody,
+    });
+
+    push(`Submitted ${maxRain} mm for ${yesterdayDMY} to Cabri. Done.`);
+    await reportStatus(`SUCCESS — submitted ${maxRain} mm for ${yesterdayDMY}`, log);
+    return res.status(200).json({ ok: true, log });
+  } catch (err) {
+    push('ERROR: ' + err.message);
+    await reportStatus(`FAILED — ${err.message}`, log);
+    return res.status(500).json({ ok: false, log });
   }
 };
