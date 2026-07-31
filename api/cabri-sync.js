@@ -10,7 +10,7 @@
 // Variables, NOT hardcoded in code, so the password isn't in your repo):
 //   CABRI_USERNAME = דודי
 //   CABRI_PASSWORD = 12245
-//   WEATHER_LOG_URL = http://weather-dan.co.il/weather-log.json
+//   WEATHER_LOG_URL = https://weather-dan.co.il/weather-log.json
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
 const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
@@ -49,7 +49,7 @@ function cookieHeader(jar) {
   return Object.values(jar).join('; ');
 }
 
-const STATUS_URL = 'http://weather-dan.co.il/cabri-sync-status.php';
+const STATUS_URL = 'https://weather-dan.co.il/cabri-sync-status.php';
 async function reportStatus(message, log) {
   try {
     const r = await fetch(STATUS_URL, {
@@ -74,7 +74,6 @@ async function fetchWithCookies(url, jar, options = {}) {
       'user-agent': 'Mozilla/5.0 (compatible; DanWeatherSync/1.0)',
     },
   });
-  // Node's fetch (undici) exposes multiple Set-Cookie via getSetCookie() when available
   const setCookies = typeof res.headers.getSetCookie === 'function'
     ? res.headers.getSetCookie()
     : res.headers.get('set-cookie');
@@ -90,9 +89,8 @@ module.exports = async (req, res) => {
   try {
     const USERNAME = process.env.CABRI_USERNAME || 'דודי';
     const PASSWORD = process.env.CABRI_PASSWORD || '12245';
-    const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'http://weather-dan.co.il/weather-log.json';
+    const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'https://weather-dan.co.il/weather-log.json';
 
-    // 1) Yesterday's rain total from the station's own log
     const logResp = await fetch(WEATHER_LOG_URL, { headers: { 'user-agent': 'Mozilla/5.0' } });
     if (!logResp.ok) throw new Error('Could not fetch weather-log.json: ' + logResp.status);
     const points = await logResp.json();
@@ -117,7 +115,6 @@ module.exports = async (req, res) => {
     }
     push(`Yesterday (${yesterdayDMY}) rain total: ${maxRain} mm`);
 
-    // 2) Login
     const jar = {};
     const { body: loginPage } = await fetchWithCookies(LOGIN_URL, jar);
     const viewState = extractHidden(loginPage, '__VIEWSTATE');
@@ -132,10 +129,6 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$password': PASSWORD,
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
-    // The site responds to the login POST with a 302 redirect that carries the auth
-    // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
-    // manual cookie header, losing the session. So we capture the 302 directly
-    // (redirect: 'manual') and follow it ourselves with cookies attached.
     const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
@@ -144,7 +137,6 @@ module.exports = async (req, res) => {
     });
     if (loginRes.status !== 302) push('WARNING: unexpected login status ' + loginRes.status);
 
-    // 3) Load GetRain admin page (fresh tokens + current values)
     const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
     const viewState2 = extractHidden(ratePage, '__VIEWSTATE');
     const viewStateGen2 = extractHidden(ratePage, '__VIEWSTATEGENERATOR');
