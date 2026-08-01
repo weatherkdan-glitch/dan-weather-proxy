@@ -4,7 +4,7 @@
 // appends a real sample to weather-log.json server-side, independent of site visits.
 
 const PROXY_URL = 'https://dan-weather-proxy.vercel.app/api/station';
-const LOG_SAVE_URL = 'https://weather-dan.co.il/Demo/weather-log-save.php'; // TEST — points at Demo. Change back to the live URL (remove /Demo) once confirmed working.
+const LOG_SAVE_URL = 'https://weather-dan.co.il/weather-log-save.php'; // TEST — points at Demo. Change back to the live URL (remove /Demo) once confirmed working.
 
 module.exports = async (req, res) => {
   const log = [];
