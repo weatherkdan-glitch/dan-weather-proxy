@@ -15,7 +15,7 @@ module.exports = async (req, res) => {
     if (!r.ok) throw new Error('station proxy fetch failed: ' + r.status);
     const wrap = await r.json();
     const d = wrap && wrap.data;
-    if (d == null || d.temp == null) throw new Error('station data missing temp — nothing to log');
+    if (d == null || d.temp == null) throw new Error('station data missing temp — nothing to log. Raw response: ' + JSON.stringify(wrap).slice(0,500));
 
     const wm = (d.windStr || '').match(/(\d+\.?\d*)\s*km/);
     const windSpd = wm ? parseFloat(wm[1]) : null;
