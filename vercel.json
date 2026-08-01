@@ -1,6 +1,6 @@
 {
-  "rewrites": [{ "source": "/api/(.*)", "destination": "/api/$1" }],
   "crons": [
-    { "path": "/api/cabri-sync", "schedule": "0 3 * * *" }
+    { "path": "/api/cabri-sync", "schedule": "0 3 * * *" },
+    { "path": "/api/log-sync", "schedule": "*/5 * * * *" }
   ]
 }
