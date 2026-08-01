@@ -13,7 +13,8 @@ module.exports = async (req, res) => {
   try {
     const r = await fetch(PROXY_URL, { headers: { 'user-agent': 'Mozilla/5.0' } });
     if (!r.ok) throw new Error('station proxy fetch failed: ' + r.status);
-    const d = await r.json();
+    const wrap = await r.json();
+    const d = wrap && wrap.data;
     if (d == null || d.temp == null) throw new Error('station data missing temp — nothing to log');
 
     const wm = (d.windStr || '').match(/(\d+\.?\d*)\s*km/);
