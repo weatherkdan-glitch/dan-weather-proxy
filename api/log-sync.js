@@ -20,14 +20,15 @@ module.exports = async (req, res) => {
     const wm = (d.windStr || '').match(/(\d+\.?\d*)\s*km/);
     const windSpd = wm ? parseFloat(wm[1]) : null;
 
+    const round1 = (n) => (n == null ? null : Math.round(n * 10) / 10);
     const point = {
       t: Date.now(),
-      temp: d.temp,
-      hum: d.humidity,
-      pres: d.pressure,
-      dew: d.dew,
-      rain: d.rainToday,
-      wind: windSpd,
+      temp: round1(d.temp),
+      hum: round1(d.humidity),
+      pres: round1(d.pressure),
+      dew: round1(d.dew),
+      rain: round1(d.rainToday),
+      wind: round1(windSpd),
     };
     push('Sample: ' + JSON.stringify(point));
 
