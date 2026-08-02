@@ -1,5 +1,5 @@
 {
   "crons": [
-    { "path": "/api/cabri-sync", "schedule": "0 3 * * *" }
+    { "path": "/api/cabri-sync", "schedule": "10 22 * * *" }
   ]
 }
