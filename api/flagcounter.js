@@ -15,7 +15,7 @@ const CODE  = 'Kyq';
 const HOST  = 'https://s01.flagcounter.com';
 const TOP_N = 30;
 const BATCH_SIZE = 10;
-const DEADLINE_MS = 8000;
+const DEADLINE_MS = 25000; // generous — this runs on a background schedule, never blocking a visitor
 
 async function getText(url, retries) {
   retries = retries == null ? 2 : retries;
@@ -81,7 +81,7 @@ module.exports = async (req, res) => {
       const batch = top.slice(i, i + BATCH_SIZE);
       await Promise.all(batch.map(async (cc) => {
         try {
-          const h = await getText(`${HOST}/detail30/${cc}/${CODE}`);
+          const h = await getText(`${HOST}/detail30/${cc}/${CODE}`, 0);
           month30[cc] = sumDays(h, 30);
           week7[cc]   = sumDays(h, 7);
         } catch (e) { /* skip on error */ }
@@ -91,7 +91,6 @@ module.exports = async (req, res) => {
     const result = { ok: true, totals, month30, week7, avg30, updated: new Date().toISOString() };
     res.status(200).json(result);
 
-    // Fire-and-forget: push to the site's own server for fast static reads.
     fetch('https://weather-dan.co.il/flagcounter-cache-save.php', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
