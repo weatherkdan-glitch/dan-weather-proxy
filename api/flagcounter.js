@@ -21,12 +21,22 @@ const CODE  = 'Kyq';                      // your FlagCounter code
 const HOST  = 'https://s01.flagcounter.com';
 const TTL   = 30 * 60 * 1000;             // cache 30 minutes
 const TOP_N = 30;                          // how many countries to pull 30-day for
+const BATCH_SIZE = 6;                      // concurrent per-country requests — too many at once gets rate-limited
 
 let _cache = null, _cacheAt = 0;
 
-async function getText(url) {
-  const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DanWeather/1.0)' } });
-  return r.text();
+async function getText(url, retries) {
+  retries = retries == null ? 1 : retries;
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DanWeather/1.0)' } });
+    return r.text();
+  } catch (e) {
+    if (retries > 0) {
+      await new Promise((r) => setTimeout(r, 800));
+      return getText(url, retries - 1);
+    }
+    throw e;
+  }
 }
 
 // Per-country all-time totals from the Details pages.
@@ -68,7 +78,7 @@ module.exports = async (req, res) => {
     const now = Date.now();
     if (_cache && now - _cacheAt < TTL) { res.status(200).json(_cache); return; }
 
-    // 1) totals (both list pages) + site-wide average
+    // 1) totals (both list pages) + site-wide average — each retries once on failure
     const [p1, p2, overview] = await Promise.all([
       getText(`${HOST}/countries/${CODE}`),
       getText(`${HOST}/countries/${CODE}/2`).catch(() => ''),
@@ -77,17 +87,23 @@ module.exports = async (req, res) => {
     const totals = Object.assign({}, parseTotals(p1), parseTotals(p2));
     const avg30  = parseAvg30(overview);
 
-    // 2) real 30-day per country, for the TOP_N by total
+    // 2) real 30-day per country, for the TOP_N by total — fetched in small
+    // batches (not all 30 at once) with a retry each, since firing every
+    // request simultaneously was triggering rate-limiting on FlagCounter's
+    // side and losing most countries for the whole 30-min cache window.
     const top = Object.keys(totals).sort((a, b) => totals[b] - totals[a]).slice(0, TOP_N);
     const month30 = {};
     const week7 = {};
-    await Promise.all(top.map(async (cc) => {
-      try {
-        const h = await getText(`${HOST}/detail30/${cc}/${CODE}`);
-        month30[cc] = sumDays(h, 30);
-        week7[cc]   = sumDays(h, 7);
-      } catch (e) { /* skip on error */ }
-    }));
+    for (let i = 0; i < top.length; i += BATCH_SIZE) {
+      const batch = top.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(async (cc) => {
+        try {
+          const h = await getText(`${HOST}/detail30/${cc}/${CODE}`, 1);
+          month30[cc] = sumDays(h, 30);
+          week7[cc]   = sumDays(h, 7);
+        } catch (e) { /* skip on error */ }
+      }));
+    }
 
     _cache   = { ok: true, totals, month30, week7, avg30, updated: new Date().toISOString() };
     _cacheAt = now;
