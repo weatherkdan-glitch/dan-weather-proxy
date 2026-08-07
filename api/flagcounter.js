@@ -21,7 +21,7 @@ const CODE  = 'Kyq';                      // your FlagCounter code
 const HOST  = 'https://s01.flagcounter.com';
 const TTL   = 30 * 60 * 1000;             // cache 30 minutes
 const TOP_N = 30;                          // how many countries to pull 30-day for
-const BATCH_SIZE = 6;                      // concurrent per-country requests — too many at once gets rate-limited
+const BATCH_SIZE = 10;                     // concurrent per-country requests — too many at once gets rate-limited
 
 let _cache = null, _cacheAt = 0;
 
@@ -91,14 +91,19 @@ module.exports = async (req, res) => {
     // batches (not all 30 at once) with a retry each, since firing every
     // request simultaneously was triggering rate-limiting on FlagCounter's
     // side and losing most countries for the whole 30-min cache window.
+    // Hard deadline so a slow round still returns whatever it has instead of
+    // running past Vercel's function timeout and failing the whole request.
+    const DEADLINE_MS = 8000;
+    const startedAt = Date.now();
     const top = Object.keys(totals).sort((a, b) => totals[b] - totals[a]).slice(0, TOP_N);
     const month30 = {};
     const week7 = {};
     for (let i = 0; i < top.length; i += BATCH_SIZE) {
+      if (Date.now() - startedAt > DEADLINE_MS) break;
       const batch = top.slice(i, i + BATCH_SIZE);
       await Promise.all(batch.map(async (cc) => {
         try {
-          const h = await getText(`${HOST}/detail30/${cc}/${CODE}`, 1);
+          const h = await getText(`${HOST}/detail30/${cc}/${CODE}`, 0);
           month30[cc] = sumDays(h, 30);
           week7[cc]   = sumDays(h, 7);
         } catch (e) { /* skip on error */ }
