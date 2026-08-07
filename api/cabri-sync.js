@@ -74,6 +74,7 @@ async function fetchWithCookies(url, jar, options = {}) {
       'user-agent': 'Mozilla/5.0 (compatible; DanWeatherSync/1.0)',
     },
   });
+  // Node's fetch (undici) exposes multiple Set-Cookie via getSetCookie() when available
   const setCookies = typeof res.headers.getSetCookie === 'function'
     ? res.headers.getSetCookie()
     : res.headers.get('set-cookie');
@@ -91,21 +92,35 @@ module.exports = async (req, res) => {
     const PASSWORD = process.env.CABRI_PASSWORD || '12245';
     const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'https://weather-dan.co.il/weather-log.json';
 
+    // 1) Yesterday's rain total from the station's own log
     const logResp = await fetch(WEATHER_LOG_URL, { headers: { 'user-agent': 'Mozilla/5.0' } });
     if (!logResp.ok) throw new Error('Could not fetch weather-log.json: ' + logResp.status);
     const points = await logResp.json();
 
+    // Dates must be computed in Israel calendar time, not the server's UTC
+    // clock — this job fires at 01:10 Israel time, which is still the
+    // previous UTC day, so a plain UTC Date computation lands one extra day
+    // too far back every time it runs on schedule.
+    const IL_TZ = 'Asia/Jerusalem';
+    function ilYMD(date) {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: IL_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+      const get = (t) => parts.find(p => p.type === t).value;
+      return { y: +get('year'), m: +get('month'), d: +get('day') };
+    }
     const now = new Date();
-    const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
-    const y = yesterday.getFullYear(), m = yesterday.getMonth() + 1, d = yesterday.getDate();
+    const today = ilYMD(now);
+    // Step back one Israel-calendar day using a UTC-anchored date so we don't
+    // reintroduce a timezone bug by subtracting raw milliseconds.
+    const yesterdayUTC = new Date(Date.UTC(today.y, today.m - 1, today.d - 1));
+    const { y, m, d } = ilYMD(yesterdayUTC);
     const yesterdayYMD = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const yesterdayDMY = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
 
     let maxRain = null;
     for (const p of points) {
       if (p.t == null || p.rain == null) continue;
-      const pd = new Date(p.t);
-      const pYMD = `${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, '0')}-${String(pd.getDate()).padStart(2, '0')}`;
+      const pYMDobj = ilYMD(new Date(p.t));
+      const pYMD = `${pYMDobj.y}-${String(pYMDobj.m).padStart(2, '0')}-${String(pYMDobj.d).padStart(2, '0')}`;
       if (pYMD === yesterdayYMD && (maxRain === null || p.rain > maxRain)) maxRain = p.rain;
     }
 
@@ -115,6 +130,7 @@ module.exports = async (req, res) => {
     }
     push(`Yesterday (${yesterdayDMY}) rain total: ${maxRain} mm`);
 
+    // 2) Login
     const jar = {};
     const { body: loginPage } = await fetchWithCookies(LOGIN_URL, jar);
     const viewState = extractHidden(loginPage, '__VIEWSTATE');
@@ -129,6 +145,10 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$password': PASSWORD,
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
+    // The site responds to the login POST with a 302 redirect that carries the auth
+    // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
+    // manual cookie header, losing the session. So we capture the 302 directly
+    // (redirect: 'manual') and follow it ourselves with cookies attached.
     const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
@@ -137,6 +157,7 @@ module.exports = async (req, res) => {
     });
     if (loginRes.status !== 302) push('WARNING: unexpected login status ' + loginRes.status);
 
+    // 3) Load GetRain admin page (fresh tokens + current values)
     const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
     const viewState2 = extractHidden(ratePage, '__VIEWSTATE');
     const viewStateGen2 = extractHidden(ratePage, '__VIEWSTATEGENERATOR');
