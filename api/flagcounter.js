@@ -17,9 +17,18 @@ const TOP_N = 30;
 const BATCH_SIZE = 10;
 const DEADLINE_MS = 8000;
 
-async function getText(url) {
-  const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DanWeather/1.0)' } });
-  return r.text();
+async function getText(url, retries) {
+  retries = retries == null ? 2 : retries;
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DanWeather/1.0)' } });
+    return r.text();
+  } catch (e) {
+    if (retries > 0) {
+      await new Promise((r) => setTimeout(r, 1000));
+      return getText(url, retries - 1);
+    }
+    throw e;
+  }
 }
 
 function parseTotals(html) {
@@ -52,6 +61,7 @@ function parseAvg30(html) {
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
   try {
     const [p1, p2, overview] = await Promise.all([
