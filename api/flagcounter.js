@@ -14,8 +14,15 @@
 const CODE  = 'Kyq';
 const HOST  = 'https://s01.flagcounter.com';
 const TOP_N = 30;
-const BATCH_SIZE = 10;
-const DEADLINE_MS = 25000; // generous — this runs on a background schedule, never blocking a visitor
+const CACHE_URL = 'https://weather-dan.co.il/flagcounter-cache-save.php';
+
+async function getPrevCache() {
+  try {
+    const r = await fetch(CACHE_URL, { headers: { 'Cache-Control': 'no-cache' } });
+    const j = await r.json();
+    return j && j.ok ? j : null;
+  } catch (e) { return null; }
+}
 
 async function getText(url, retries) {
   retries = retries == null ? 2 : retries;
@@ -64,6 +71,10 @@ module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
   try {
+    const prev = await getPrevCache();
+    const today = new Date().toISOString().slice(0, 10);
+    const fetchedOn = (prev && prev.fetchedOn) || {};
+
     const [p1, p2, overview] = await Promise.all([
       getText(`${HOST}/countries/${CODE}`),
       getText(`${HOST}/countries/${CODE}/2`).catch(() => ''),
@@ -72,23 +83,22 @@ module.exports = async (req, res) => {
     const totals = Object.assign({}, parseTotals(p1), parseTotals(p2));
     const avg30  = parseAvg30(overview);
 
-    const startedAt = Date.now();
     const top = Object.keys(totals).sort((a, b) => totals[b] - totals[a]).slice(0, TOP_N);
-    const month30 = {};
-    const week7 = {};
-    for (let i = 0; i < top.length; i += BATCH_SIZE) {
-      if (Date.now() - startedAt > DEADLINE_MS) break;
-      const batch = top.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(async (cc) => {
-        try {
-          const h = await getText(`${HOST}/detail30/${cc}/${CODE}`, 0);
-          month30[cc] = sumDays(h, 30);
-          week7[cc]   = sumDays(h, 7);
-        } catch (e) { /* skip on error */ }
-      }));
-    }
+    const month30 = Object.assign({}, prev && prev.month30);
+    const week7   = Object.assign({}, prev && prev.week7);
 
-    const result = { ok: true, totals, month30, week7, avg30, updated: new Date().toISOString() };
+    const toFetch = top.filter((cc) => fetchedOn[cc] !== today);
+
+    await Promise.all(toFetch.map(async (cc) => {
+      try {
+        const h = await getText(`${HOST}/detail30/${cc}/${CODE}`, 0);
+        month30[cc] = sumDays(h, 30);
+        week7[cc]   = sumDays(h, 7);
+        fetchedOn[cc] = today;
+      } catch (e) { /* keep previous cached value for this country */ }
+    }));
+
+    const result = { ok: true, totals, month30, week7, avg30, fetchedOn, updated: new Date().toISOString() };
     res.status(200).json(result);
 
     fetch('https://weather-dan.co.il/flagcounter-cache-save.php', {
