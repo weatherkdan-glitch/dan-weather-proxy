@@ -3,7 +3,7 @@ const { TextDecoder } = require('util');
 let cache = null;
 let cacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000;
-const STATION_URL = 'http://cs44.box.co.il/~weatherd/ALL-dan-s.htm';
+const STATION_URL = 'https://weather-dan.co.il/ALL-dan.htm';
 
 function fetchStation() {
   return fetch(STATION_URL, { headers: { 'User-Agent': 'Mozilla/5.0' } })
