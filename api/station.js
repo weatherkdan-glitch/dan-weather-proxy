@@ -94,7 +94,7 @@ function parseStation(html) {
     pressLow:    pressHL.low,
     rainToday:   afterNum('משקעים היום'),
     rainStorm:   afterNum('משקעים בפרק'),
-    rainMonth:   afterNum('משקעים החודש'),
+    rainMonth:   (function(){ var v = afterNum('משקעים החודש'); var now = new Date(); if (v!=null && now.getFullYear()===2026 && now.getMonth()===7) v = Math.max(0, Math.round((v-0.2)*10)/10); return v; })(),
     rainSeason:  afterNum('משקעים מתחילת העונה'),
     windChill:   afterNum('השפעת הצינון של הרוח'),
     windHigh:    afterNum('High Wind Speed'),
