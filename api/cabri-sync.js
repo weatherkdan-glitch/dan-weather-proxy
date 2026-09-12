@@ -1,26 +1,3 @@
-
-
-Connection interrupted
-The log shows something different than what you described: the 0.4mm was submitted for September 2nd (02/09/2026), not for any August date — no multi-day delay actually occurred, it was submitted next-morning as designed (Sept 3, 1:10 AM, for "yesterday" = Sept 2).
-
-So this is likely trailing residual contamination from the Aug 30 gauge-disturbance incident — the console's daily rain counter didn't fully clear immediately after that event and the manual reset, and bled a small 0.4mm phantom reading into Sept 2nd's total before fully settling. Not a sync-timing bug.
-
-This is hard to catch automatically — 0.4mm is indistinguishable from real light rain, well under the 15mm jump-guard we just added. The only real prevention: after any physical gauge tampering/reset event, keep an eye on the next 2–3 days' Cabri submissions (or pause that cron briefly) before trusting them.
-
-Want me to correct that 0.4mm on Cabri's Sept 2 entry to 0 now, given we've confirmed it wasn't real rain?
-
-What i want is that the cabri sync to also verify the last 2-3 days before.
-I assume that if i will make a manual correction it will be on the same day or a day after. This should update retroactively - we have some file logging daily rain anyway right? Make the cabri sync check it for the last 3 days
-Two changes: extend the log's retention window so 3 days of raw data exist to check, and make cabri-sync re-verify/re-submit each of the last 3 days (not just yesterday) every run — so a late-settling correction propagates automatically.
-
-Both files ready above.
-
-weather-log-save.php → upload to your server (extends the rolling log from 25h to 74h; doesn't affect the 24h charts, which already filter client-side).
-cabri-sync.js → paste into GitHub api/cabri-sync.js, commit.
-Now each daily run re-verifies and re-submits the last 3 calendar days, not just yesterday — so a value that only settles a day or two late (like the Sept 2 residual) still reaches Cabri correctly without a manual fix, while the suspicious-jump guard still blocks real sensor-glitch spikes.
-
-Edited 2 files
-Give me the cabri sync code to paste
 // api/cabri-sync.js
 // Vercel Serverless Function — run daily via Vercel Cron (see vercel.json).
 // Re-verifies and submits the last 3 days' total rain (mm) to rain.cabri.org.il/Dan.
