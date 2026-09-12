@@ -1,6 +1,29 @@
+
+
+Connection interrupted
+The log shows something different than what you described: the 0.4mm was submitted for September 2nd (02/09/2026), not for any August date — no multi-day delay actually occurred, it was submitted next-morning as designed (Sept 3, 1:10 AM, for "yesterday" = Sept 2).
+
+So this is likely trailing residual contamination from the Aug 30 gauge-disturbance incident — the console's daily rain counter didn't fully clear immediately after that event and the manual reset, and bled a small 0.4mm phantom reading into Sept 2nd's total before fully settling. Not a sync-timing bug.
+
+This is hard to catch automatically — 0.4mm is indistinguishable from real light rain, well under the 15mm jump-guard we just added. The only real prevention: after any physical gauge tampering/reset event, keep an eye on the next 2–3 days' Cabri submissions (or pause that cron briefly) before trusting them.
+
+Want me to correct that 0.4mm on Cabri's Sept 2 entry to 0 now, given we've confirmed it wasn't real rain?
+
+What i want is that the cabri sync to also verify the last 2-3 days before.
+I assume that if i will make a manual correction it will be on the same day or a day after. This should update retroactively - we have some file logging daily rain anyway right? Make the cabri sync check it for the last 3 days
+Two changes: extend the log's retention window so 3 days of raw data exist to check, and make cabri-sync re-verify/re-submit each of the last 3 days (not just yesterday) every run — so a late-settling correction propagates automatically.
+
+Both files ready above.
+
+weather-log-save.php → upload to your server (extends the rolling log from 25h to 74h; doesn't affect the 24h charts, which already filter client-side).
+cabri-sync.js → paste into GitHub api/cabri-sync.js, commit.
+Now each daily run re-verifies and re-submits the last 3 calendar days, not just yesterday — so a value that only settles a day or two late (like the Sept 2 residual) still reaches Cabri correctly without a manual fix, while the suspicious-jump guard still blocks real sensor-glitch spikes.
+
+Edited 2 files
+Give me the cabri sync code to paste
 // api/cabri-sync.js
 // Vercel Serverless Function — run daily via Vercel Cron (see vercel.json).
-// Submits YESTERDAY's total rain (mm) to rain.cabri.org.il/Dan automatically.
+// Re-verifies and submits the last 3 days' total rain (mm) to rain.cabri.org.il/Dan.
 //
 // Add this file to the SAME GitHub repo you already deploy to Vercel for
 // dan-weather-proxy (e.g. api/cabri-sync.js), add/merge the vercel.json
@@ -10,7 +33,7 @@
 // Variables, NOT hardcoded in code, so the password isn't in your repo):
 //   CABRI_USERNAME = דודי
 //   CABRI_PASSWORD = 12245
-//   WEATHER_LOG_URL = https://weather-dan.co.il/weather-log.json
+//   WEATHER_LOG_URL = http://weather-dan.co.il/weather-log.json
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
 const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
@@ -49,7 +72,7 @@ function cookieHeader(jar) {
   return Object.values(jar).join('; ');
 }
 
-const STATUS_URL = 'https://weather-dan.co.il/cabri-sync-status.php';
+const STATUS_URL = 'http://weather-dan.co.il/cabri-sync-status.php';
 async function reportStatus(message, log) {
   try {
     const r = await fetch(STATUS_URL, {
@@ -74,7 +97,6 @@ async function fetchWithCookies(url, jar, options = {}) {
       'user-agent': 'Mozilla/5.0 (compatible; DanWeatherSync/1.0)',
     },
   });
-  // Node's fetch (undici) exposes multiple Set-Cookie via getSetCookie() when available
   const setCookies = typeof res.headers.getSetCookie === 'function'
     ? res.headers.getSetCookie()
     : res.headers.get('set-cookie');
@@ -90,47 +112,47 @@ module.exports = async (req, res) => {
   try {
     const USERNAME = process.env.CABRI_USERNAME || 'דודי';
     const PASSWORD = process.env.CABRI_PASSWORD || '12245';
-    const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'https://weather-dan.co.il/weather-log.json';
+    const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'http://weather-dan.co.il/weather-log.json';
+    const now = new Date();
 
-    // 1) Yesterday's rain total from the station's own log
+    // 1) This site's own rain log (last ~74h)
     const logResp = await fetch(WEATHER_LOG_URL, { headers: { 'user-agent': 'Mozilla/5.0' } });
     if (!logResp.ok) throw new Error('Could not fetch weather-log.json: ' + logResp.status);
     const points = await logResp.json();
 
-    // Dates must be computed in Israel calendar time, not the server's UTC
-    // clock — this job fires at 01:10 Israel time, which is still the
-    // previous UTC day, so a plain UTC Date computation lands one extra day
-    // too far back every time it runs on schedule.
-    const IL_TZ = 'Asia/Jerusalem';
-    function ilYMD(date) {
-      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: IL_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
-      const get = (t) => parts.find(p => p.type === t).value;
-      return { y: +get('year'), m: +get('month'), d: +get('day') };
-    }
-    const now = new Date();
-    const today = ilYMD(now);
-    // Step back one Israel-calendar day using a UTC-anchored date so we don't
-    // reintroduce a timezone bug by subtracting raw milliseconds.
-    const yesterdayUTC = new Date(Date.UTC(today.y, today.m - 1, today.d - 1));
-    const { y, m, d } = ilYMD(yesterdayUTC);
-    const yesterdayYMD = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const yesterdayDMY = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
-
-    let maxRain = null;
-    for (const p of points) {
-      if (p.t == null || p.rain == null) continue;
-      const pYMDobj = ilYMD(new Date(p.t));
-      const pYMD = `${pYMDobj.y}-${String(pYMDobj.m).padStart(2, '0')}-${String(pYMDobj.d).padStart(2, '0')}`;
-      if (pYMD === yesterdayYMD && (maxRain === null || p.rain > maxRain)) maxRain = p.rain;
+    function dayTotal(daysAgo) {
+      const target = new Date(now.getTime() - daysAgo * 24 * 3600 * 1000);
+      const ty = target.getFullYear(), tm = target.getMonth() + 1, td = target.getDate();
+      const ymd = `${ty}-${String(tm).padStart(2, '0')}-${String(td).padStart(2, '0')}`;
+      const dmy = `${String(td).padStart(2, '0')}/${String(tm).padStart(2, '0')}/${ty}`;
+      let max = null, prev = null, jump = null;
+      for (const p of points) {
+        if (p.t == null || p.rain == null) continue;
+        const pd = new Date(p.t);
+        const pYMD = `${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, '0')}-${String(pd.getDate()).padStart(2, '0')}`;
+        if (pYMD !== ymd) continue;
+        if (max === null || p.rain > max) max = p.rain;
+        // A real tipping-bucket gauge can't jump more than a couple mm in one
+        // 5-min sample even in a downpour — a bigger jump is a sensor glitch
+        // (disconnection/reset artifact), not real rain.
+        if (prev != null && p.rain - prev > 15) jump = { from: prev, to: p.rain };
+        prev = p.rain;
+      }
+      return { ymd, dmy, max, jump };
     }
 
-    if (maxRain === null) {
-      push(`No log samples found for ${yesterdayYMD} — nothing to submit.`);
+    // Re-check the last 3 days every run (not just yesterday) so a value that
+    // only settles to its true reading a day or two late — e.g. a console
+    // rain counter still clearing residual noise from a physical disturbance
+    // — still reaches Cabri once it's known, without needing a manual fix.
+    const days = [1, 2, 3].map(dayTotal);
+    if (!days.some(d => d.max !== null)) {
+      push('No log samples found for the last 3 days — nothing to submit.');
       return res.status(200).json({ ok: true, log });
     }
-    push(`Yesterday (${yesterdayDMY}) rain total: ${maxRain} mm`);
 
-    // 2) Login
+    // 2) Login once, then re-load the GetRain page + submit fresh for EACH
+    // of the 3 days in turn (tokens are single-use per page load).
     const jar = {};
     const { body: loginPage } = await fetchWithCookies(LOGIN_URL, jar);
     const viewState = extractHidden(loginPage, '__VIEWSTATE');
@@ -145,10 +167,6 @@ module.exports = async (req, res) => {
       'ctl00$contentPlaceHolder$lg$password': PASSWORD,
       'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
-    // The site responds to the login POST with a 302 redirect that carries the auth
-    // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
-    // manual cookie header, losing the session. So we capture the 302 directly
-    // (redirect: 'manual') and follow it ourselves with cookies attached.
     const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
@@ -157,46 +175,52 @@ module.exports = async (req, res) => {
     });
     if (loginRes.status !== 302) push('WARNING: unexpected login status ' + loginRes.status);
 
-    // 3) Load GetRain admin page (fresh tokens + current values)
-    const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
-    const viewState2 = extractHidden(ratePage, '__VIEWSTATE');
-    const viewStateGen2 = extractHidden(ratePage, '__VIEWSTATEGENERATOR');
-    const eventValidation2 = extractHidden(ratePage, '__EVENTVALIDATION');
-
-    const rowRe = /(\d{2}\/\d{2}\/\d{4})\s*<\/td>\s*<td[^>]*>\s*<input name="(ctl00\$contentPlaceHolder\$rainTbl\$ctl\d+\$millimeter)"[^>]*value="([^"]*)"/gs;
-    const rows = [...ratePage.matchAll(rowRe)];
-    if (rows.length === 0) throw new Error('Could not find any rain rows on the GetRain page (page structure may have changed).');
-
-    const postFields = {
-      __VIEWSTATE: viewState2,
-      __VIEWSTATEGENERATOR: viewStateGen2,
-      __EVENTVALIDATION: eventValidation2,
-    };
-
-    let found = false;
-    for (const row of rows) {
-      const [, rowDate, fieldName, currentValue] = row;
-      if (rowDate === yesterdayDMY) {
-        postFields[fieldName] = String(maxRain);
-        found = true;
-        push(`Setting ${fieldName} (${rowDate}) to ${maxRain} mm`);
-      } else {
-        postFields[fieldName] = currentValue;
+    let anySubmitted = false;
+    for (const day of days) {
+      if (day.max === null) { push(`${day.dmy}: no log samples for this day — skipped.`); continue; }
+      if (day.jump) {
+        push(`${day.dmy}: SUSPICIOUS jump ${day.jump.from}mm -> ${day.jump.to}mm in one step — looks like a sensor glitch, not real rain. Skipped.`);
+        continue;
       }
+
+      const { body: ratePage } = await fetchWithCookies(GETRAIN_URL, jar);
+      const viewState2 = extractHidden(ratePage, '__VIEWSTATE');
+      const viewStateGen2 = extractHidden(ratePage, '__VIEWSTATEGENERATOR');
+      const eventValidation2 = extractHidden(ratePage, '__EVENTVALIDATION');
+
+      const rowRe = /(\d{2}\/\d{2}\/\d{4})\s*<\/td>\s*<td[^>]*>\s*<input name="(ctl00\$contentPlaceHolder\$rainTbl\$ctl\d+\$millimeter)"[^>]*value="([^"]*)"/gs;
+      const rows = [...ratePage.matchAll(rowRe)];
+      if (rows.length === 0) throw new Error('Could not find any rain rows on the GetRain page (page structure may have changed).');
+
+      const postFields = {
+        __VIEWSTATE: viewState2,
+        __VIEWSTATEGENERATOR: viewStateGen2,
+        __EVENTVALIDATION: eventValidation2,
+      };
+
+      let found = false;
+      for (const row of rows) {
+        const [, rowDate, fieldName, currentValue] = row;
+        if (rowDate === day.dmy) {
+          postFields[fieldName] = String(day.max);
+          found = true;
+        } else {
+          postFields[fieldName] = currentValue;
+        }
+      }
+      if (!found) { push(`${day.dmy}: no matching row on the GetRain page — skipped.`); continue; }
+
+      postFields['ctl00$contentPlaceHolder$saveBtn'] = 'שמור';
+      await fetchWithCookies(GETRAIN_URL, jar, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: buildFormBody(postFields),
+      });
+      push(`${day.dmy}: submitted ${day.max} mm.`);
+      anySubmitted = true;
     }
-    if (!found) throw new Error(`Could not find a row for yesterday's date (${yesterdayDMY}) on the GetRain page.`);
 
-    postFields['ctl00$contentPlaceHolder$saveBtn'] = 'שמור';
-
-    const saveBody = buildFormBody(postFields);
-    await fetchWithCookies(GETRAIN_URL, jar, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: saveBody,
-    });
-
-    push(`Submitted ${maxRain} mm for ${yesterdayDMY} to Cabri. Done.`);
-    await reportStatus(`SUCCESS — submitted ${maxRain} mm for ${yesterdayDMY}`, log);
+    await reportStatus(anySubmitted ? `SUCCESS — ${log.join(' | ')}` : `SKIPPED ALL — ${log.join(' | ')}`, log);
     return res.status(200).json({ ok: true, log });
   } catch (err) {
     push('ERROR: ' + err.message);
