@@ -1,6 +1,6 @@
 // api/cabri-sync.js
-// Vercel Serverless Function — run daily via Vercel Cron (see vercel.json).
-// Re-verifies and submits the last 3 days' total rain (mm) to rain.cabri.org.il/Dan.
+// Vercel Serverless Function ג€” run daily via Vercel Cron (see vercel.json).
+// Re-verifies and submits the last 3 days' total rain (mm) to rain.cabri.org.il/Dan automatically.
 //
 // Add this file to the SAME GitHub repo you already deploy to Vercel for
 // dan-weather-proxy (e.g. api/cabri-sync.js), add/merge the vercel.json
@@ -8,9 +8,9 @@
 //
 // Env vars (set in Vercel dashboard -> Project -> Settings -> Environment
 // Variables, NOT hardcoded in code, so the password isn't in your repo):
-//   CABRI_USERNAME = דודי
+//   CABRI_USERNAME = ׳“׳•׳“׳™
 //   CABRI_PASSWORD = 12245
-//   WEATHER_LOG_URL = http://weather-dan.co.il/weather-log.json
+//   DAILY_RAIN_URL = https://weather-dan.co.il/daily-rain.json (optional)
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
 const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
@@ -74,6 +74,7 @@ async function fetchWithCookies(url, jar, options = {}) {
       'user-agent': 'Mozilla/5.0 (compatible; DanWeatherSync/1.0)',
     },
   });
+  // Node's fetch (undici) exposes multiple Set-Cookie via getSetCookie() when available
   const setCookies = typeof res.headers.getSetCookie === 'function'
     ? res.headers.getSetCookie()
     : res.headers.get('set-cookie');
@@ -87,44 +88,41 @@ module.exports = async (req, res) => {
   const push = (msg) => { log.push(msg); console.log(msg); };
 
   try {
-    const USERNAME = process.env.CABRI_USERNAME || 'דודי';
+    const USERNAME = process.env.CABRI_USERNAME || '׳“׳•׳“׳™';
     const PASSWORD = process.env.CABRI_PASSWORD || '12245';
-    const WEATHER_LOG_URL = process.env.WEATHER_LOG_URL || 'http://weather-dan.co.il/weather-log.json';
+    const DAILY_RAIN_URL = process.env.DAILY_RAIN_URL || 'https://weather-dan.co.il/daily-rain.json';
     const now = new Date();
 
-    // 1) This site's own rain log (last ~74h)
-    const logResp = await fetch(WEATHER_LOG_URL, { headers: { 'user-agent': 'Mozilla/5.0' } });
-    if (!logResp.ok) throw new Error('Could not fetch weather-log.json: ' + logResp.status);
-    const points = await logResp.json();
+    // 1) Daily rain totals recorded SERVER-SIDE by daily-rain.php, which reads
+    // the station's own "Today's Rain" figure straight from ALL-dan.htm every
+    // 15 minutes. No visitor browsers involved ג€” one number per date, e.g.
+    // {"2026-09-18": 14.4}. (Earlier versions read weather-log.json, which is
+    // partly fed by visitors' browsers and could carry stale cached readings.)
+    const drResp = await fetch(DAILY_RAIN_URL + '?t=' + Date.now(), { headers: { 'user-agent': 'Mozilla/5.0' } });
+    if (!drResp.ok) throw new Error('Could not fetch daily-rain.json: ' + drResp.status);
+    const daily = await drResp.json();
 
     function dayTotal(daysAgo) {
+      // Israel-local calendar date (Vercel runs in UTC).
       const target = new Date(now.getTime() - daysAgo * 24 * 3600 * 1000);
-      const ty = target.getFullYear(), tm = target.getMonth() + 1, td = target.getDate();
-      const ymd = `${ty}-${String(tm).padStart(2, '0')}-${String(td).padStart(2, '0')}`;
-      const dmy = `${String(td).padStart(2, '0')}/${String(tm).padStart(2, '0')}/${ty}`;
-      let max = null, prev = null, jump = null;
-      for (const p of points) {
-        if (p.t == null || p.rain == null) continue;
-        const pd = new Date(p.t);
-        const pYMD = `${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, '0')}-${String(pd.getDate()).padStart(2, '0')}`;
-        if (pYMD !== ymd) continue;
-        if (max === null || p.rain > max) max = p.rain;
-        // A real tipping-bucket gauge can't jump more than a couple mm in one
-        // 5-min sample even in a downpour — a bigger jump is a sensor glitch
-        // (disconnection/reset artifact), not real rain.
-        if (prev != null && p.rain - prev > 15) jump = { from: prev, to: p.rain };
-        prev = p.rain;
-      }
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(target);
+      const [ty, tm, td] = parts.split('-');
+      const ymd = `${ty}-${tm}-${td}`;
+      const dmy = `${td}/${tm}/${ty}`;
+      const v = daily[ymd];
+      const max = (v == null || isNaN(parseFloat(v))) ? null : Math.round(parseFloat(v) * 10) / 10;
+      // A single day above 150mm here would be a sensor/reset glitch, not rain.
+      const jump = (max != null && max > 150) ? { from: 0, to: max } : null;
       return { ymd, dmy, max, jump };
     }
 
     // Re-check the last 3 days every run (not just yesterday) so a value that
-    // only settles to its true reading a day or two late — e.g. a console
+    // only settles to its true reading a day or two late ג€” e.g. a console
     // rain counter still clearing residual noise from a physical disturbance
-    // — still reaches Cabri once it's known, without needing a manual fix.
+    // ג€” still reaches Cabri once it's known, without needing a manual fix.
     const days = [1, 2, 3].map(dayTotal);
     if (!days.some(d => d.max !== null)) {
-      push('No log samples found for the last 3 days — nothing to submit.');
+      push('No daily-rain.json entries for the last 3 days ג€” nothing to submit.');
       return res.status(200).json({ ok: true, log });
     }
 
@@ -142,8 +140,12 @@ module.exports = async (req, res) => {
       __EVENTVALIDATION: eventValidation,
       'ctl00$contentPlaceHolder$lg$username': USERNAME,
       'ctl00$contentPlaceHolder$lg$password': PASSWORD,
-      'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
+      'ctl00$contentPlaceHolder$lg$submitBtn': '׳”׳™׳›׳ ׳¡ ׳׳׳¢׳¨׳›׳×',
     });
+    // The site responds to the login POST with a 302 redirect that carries the auth
+    // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
+    // manual cookie header, losing the session. So we capture the 302 directly
+    // (redirect: 'manual') and follow it ourselves with cookies attached.
     const { res: loginRes } = await fetchWithCookies(LOGIN_POST_URL, jar, {
       method: 'POST',
       redirect: 'manual',
@@ -154,9 +156,9 @@ module.exports = async (req, res) => {
 
     let anySubmitted = false;
     for (const day of days) {
-      if (day.max === null) { push(`${day.dmy}: no log samples for this day — skipped.`); continue; }
+      if (day.max === null) { push(`${day.dmy}: not in daily-rain.json ג€” skipped.`); continue; }
       if (day.jump) {
-        push(`${day.dmy}: SUSPICIOUS jump ${day.jump.from}mm -> ${day.jump.to}mm in one step — looks like a sensor glitch, not real rain. Skipped.`);
+        push(`${day.dmy}: SUSPICIOUS jump ${day.jump.from}mm -> ${day.jump.to}mm in one step ג€” looks like a sensor glitch, not real rain. Skipped.`);
         continue;
       }
 
@@ -185,9 +187,9 @@ module.exports = async (req, res) => {
           postFields[fieldName] = currentValue;
         }
       }
-      if (!found) { push(`${day.dmy}: no matching row on the GetRain page — skipped.`); continue; }
+      if (!found) { push(`${day.dmy}: no matching row on the GetRain page ג€” skipped.`); continue; }
 
-      postFields['ctl00$contentPlaceHolder$saveBtn'] = 'שמור';
+      postFields['ctl00$contentPlaceHolder$saveBtn'] = '׳©׳׳•׳¨';
       await fetchWithCookies(GETRAIN_URL, jar, {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -197,11 +199,11 @@ module.exports = async (req, res) => {
       anySubmitted = true;
     }
 
-    await reportStatus(anySubmitted ? `SUCCESS — ${log.join(' | ')}` : `SKIPPED ALL — ${log.join(' | ')}`, log);
+    await reportStatus(anySubmitted ? `SUCCESS ג€” ${log.join(' | ')}` : `SKIPPED ALL ג€” ${log.join(' | ')}`, log);
     return res.status(200).json({ ok: true, log });
   } catch (err) {
     push('ERROR: ' + err.message);
-    await reportStatus(`FAILED — ${err.message}`, log);
+    await reportStatus(`FAILED ג€” ${err.message}`, log);
     return res.status(500).json({ ok: false, log });
   }
 };
