@@ -1,5 +1,5 @@
 // api/cabri-sync.js
-// Vercel Serverless Function ג€” run daily via Vercel Cron (see vercel.json).
+// Vercel Serverless Function — run daily via Vercel Cron (see vercel.json).
 // Re-verifies and submits the last 3 days' total rain (mm) to rain.cabri.org.il/Dan automatically.
 //
 // Add this file to the SAME GitHub repo you already deploy to Vercel for
@@ -8,9 +8,9 @@
 //
 // Env vars (set in Vercel dashboard -> Project -> Settings -> Environment
 // Variables, NOT hardcoded in code, so the password isn't in your repo):
-//   CABRI_USERNAME = ׳“׳•׳“׳™
+//   CABRI_USERNAME = דודי
 //   CABRI_PASSWORD = 12245
-//   DAILY_RAIN_URL = https://weather-dan.co.il/daily-rain.json (optional)
+//   NOAA_BASE_URL = https://weather-dan.co.il/meteo/dochot/ (optional)
 
 const LOGIN_URL = 'https://rain.cabri.org.il/Login.aspx?ReturnUrl=%2fDan%2fAdmin%2fGetRain';
 const LOGIN_POST_URL = 'https://rain.cabri.org.il/Login/Signout'; // the login <form>'s actual action attribute
@@ -88,19 +88,43 @@ module.exports = async (req, res) => {
   const push = (msg) => { log.push(msg); console.log(msg); };
 
   try {
-    const USERNAME = process.env.CABRI_USERNAME || '׳“׳•׳“׳™';
+    const USERNAME = process.env.CABRI_USERNAME || 'דודי';
     const PASSWORD = process.env.CABRI_PASSWORD || '12245';
-    const DAILY_RAIN_URL = process.env.DAILY_RAIN_URL || 'https://weather-dan.co.il/daily-rain.json';
+    const NOAA_BASE_URL = process.env.NOAA_BASE_URL || 'https://weather-dan.co.il/meteo/dochot/';
     const now = new Date();
 
-    // 1) Daily rain totals recorded SERVER-SIDE by daily-rain.php, which reads
-    // the station's own "Today's Rain" figure straight from ALL-dan.htm every
-    // 15 minutes. No visitor browsers involved ג€” one number per date, e.g.
-    // {"2026-09-18": 14.4}. (Earlier versions read weather-log.json, which is
-    // partly fed by visitors' browsers and could carry stale cached readings.)
-    const drResp = await fetch(DAILY_RAIN_URL + '?t=' + Date.now(), { headers: { 'user-agent': 'Mozilla/5.0' } });
-    if (!drResp.ok) throw new Error('Could not fetch daily-rain.json: ' + drResp.status);
-    const daily = await drResp.json();
+    // 1) Daily rain straight from the station's own NOAA monthly reports
+    // (NOAAMO = this month, NOAAPRMO = last month), written by WeatherLink
+    // from the console's archive. Unlike daily-rain.json, which only knew
+    // what the 15-minute recorder happened to capture, these can't silently
+    // lose a day when the recorder is blocked or down. Last month's report
+    // is needed so the first days of a month can still re-check the end of
+    // the previous one.
+    const MONTHS = { JAN:'01', FEB:'02', MAR:'03', APR:'04', MAY:'05', JUN:'06',
+                     JUL:'07', AUG:'08', SEP:'09', OCT:'10', NOV:'11', DEC:'12' };
+    function parseNoaa(text, label) {
+      const h = text.match(/CLIMATOLOGICAL SUMMARY for ([A-Z]{3})\.?\s+(\d{4})/);
+      // A blocked request returns an HTML challenge page instead of the report.
+      // Fail loudly rather than submit nothing-as-zero.
+      if (!h || !MONTHS[h[1]]) throw new Error(label + ' is not a valid NOAA report (server block page?)');
+      const mm = MONTHS[h[1]], yyyy = h[2];
+      const out = {};
+      for (const line of text.split(/\r?\n/)) {
+        const p = line.trim().split(/\s+/);
+        if (p.length < 9 || !/^\d{1,2}$/.test(p[0])) continue;
+        const day = parseInt(p[0], 10);
+        const rain = parseFloat(p[8]);
+        if (day < 1 || day > 31 || isNaN(rain)) continue;
+        out[`${yyyy}-${mm}-${String(day).padStart(2, '0')}`] = rain;
+      }
+      return out;
+    }
+    async function getReport(name) {
+      const r = await fetch(NOAA_BASE_URL + name + '?t=' + Date.now(), { headers: { 'user-agent': 'Mozilla/5.0' } });
+      if (!r.ok) throw new Error('Could not fetch ' + name + ': ' + r.status);
+      return parseNoaa(await r.text(), name);
+    }
+    const daily = Object.assign({}, await getReport('NOAAPRMO.TXT'), await getReport('NOAAMO.TXT'));
 
     function dayTotal(daysAgo) {
       // Israel-local calendar date (Vercel runs in UTC).
@@ -117,12 +141,12 @@ module.exports = async (req, res) => {
     }
 
     // Re-check the last 3 days every run (not just yesterday) so a value that
-    // only settles to its true reading a day or two late ג€” e.g. a console
+    // only settles to its true reading a day or two late — e.g. a console
     // rain counter still clearing residual noise from a physical disturbance
-    // ג€” still reaches Cabri once it's known, without needing a manual fix.
+    // — still reaches Cabri once it's known, without needing a manual fix.
     const days = [1, 2, 3].map(dayTotal);
     if (!days.some(d => d.max !== null)) {
-      push('No daily-rain.json entries for the last 3 days ג€” nothing to submit.');
+      push('No NOAA report rows for the last 3 days — nothing to submit.');
       return res.status(200).json({ ok: true, log });
     }
 
@@ -140,7 +164,7 @@ module.exports = async (req, res) => {
       __EVENTVALIDATION: eventValidation,
       'ctl00$contentPlaceHolder$lg$username': USERNAME,
       'ctl00$contentPlaceHolder$lg$password': PASSWORD,
-      'ctl00$contentPlaceHolder$lg$submitBtn': '׳”׳™׳›׳ ׳¡ ׳׳׳¢׳¨׳›׳×',
+      'ctl00$contentPlaceHolder$lg$submitBtn': 'היכנס למערכת',
     });
     // The site responds to the login POST with a 302 redirect that carries the auth
     // cookie. fetch's automatic redirect-follow issues that next GET WITHOUT our
@@ -156,9 +180,9 @@ module.exports = async (req, res) => {
 
     let anySubmitted = false;
     for (const day of days) {
-      if (day.max === null) { push(`${day.dmy}: not in daily-rain.json ג€” skipped.`); continue; }
+      if (day.max === null) { push(`${day.dmy}: not in the NOAA reports yet — skipped.`); continue; }
       if (day.jump) {
-        push(`${day.dmy}: SUSPICIOUS jump ${day.jump.from}mm -> ${day.jump.to}mm in one step ג€” looks like a sensor glitch, not real rain. Skipped.`);
+        push(`${day.dmy}: SUSPICIOUS jump ${day.jump.from}mm -> ${day.jump.to}mm in one step — looks like a sensor glitch, not real rain. Skipped.`);
         continue;
       }
 
@@ -187,9 +211,9 @@ module.exports = async (req, res) => {
           postFields[fieldName] = currentValue;
         }
       }
-      if (!found) { push(`${day.dmy}: no matching row on the GetRain page ג€” skipped.`); continue; }
+      if (!found) { push(`${day.dmy}: no matching row on the GetRain page — skipped.`); continue; }
 
-      postFields['ctl00$contentPlaceHolder$saveBtn'] = '׳©׳׳•׳¨';
+      postFields['ctl00$contentPlaceHolder$saveBtn'] = 'שמור';
       await fetchWithCookies(GETRAIN_URL, jar, {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -199,11 +223,11 @@ module.exports = async (req, res) => {
       anySubmitted = true;
     }
 
-    await reportStatus(anySubmitted ? `SUCCESS ג€” ${log.join(' | ')}` : `SKIPPED ALL ג€” ${log.join(' | ')}`, log);
+    await reportStatus(anySubmitted ? `SUCCESS — ${log.join(' | ')}` : `SKIPPED ALL — ${log.join(' | ')}`, log);
     return res.status(200).json({ ok: true, log });
   } catch (err) {
     push('ERROR: ' + err.message);
-    await reportStatus(`FAILED ג€” ${err.message}`, log);
+    await reportStatus(`FAILED — ${err.message}`, log);
     return res.status(500).json({ ok: false, log });
   }
 };
