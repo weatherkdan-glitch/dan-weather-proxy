@@ -1,35 +1,3 @@
- Design is moving to Artifacts in the Claude app. You can keep using this version until December 14. Learn more
-
-
-
-https://s01.flagcounter.com/countries/Kyq#google_vignette
-That's a Google ad page, the #google_vignette at the end: the ad covered the screen before the click got through.
-
-Close the ad (X in the corner), or press back.
-Click Israel in the list again.
-Send me the address of the page that opens. It should contain il or Israel.
-https://s01.flagcounter.com/factbook/il/Kyq
-That's a factbook page, not the old detail page: FlagCounter changed its structure. Before I change the code, I need to know whether this page still has a list of daily visits.
-
-Please send me a screenshot of the page https://s01.flagcounter.com/factbook/il/Kyq, scrolled to show:
-
-Is there a table of dates with visitor counts (like "Today", "Yesterday", dates)?
-Or a summary of the last 7 or 30 days?
-If none of these are there, look for a link on the page such as "Visitors per day" or "Details", and send me its address too.
-
-Screenshot_2026-10-10-16-10-47-240_com.android.chrome.jpg
-The factbook page has no daily data at all, just general information about the country. So FlagCounter apparently removed the 7- and 30-day breakdown by country, and there's nowhere left to read it from.
-
-Workaround: the total per country still updates. So once a day the proxy will save a snapshot of the totals, and calculate:
-
-7 days = today's total minus the total from a week ago
-30 days = today's total minus the total from 30 days ago
-It's exact, and doesn't depend on FlagCounter pages that might change again.
-
-The catch: history starts from today. 7 days will appear in another week, 30 days in another month. Until then the cells will be empty, not 0.
-
-Paste into GitHub as api/flagcounter.js and commit:
-
 // ─────────────────────────────────────────────────────────────
 //  FlagCounter proxy for the Kibbutz Dan weather site
 //  Deploy path in the "dan-weather-proxy" repo:  /api/flagcounter.js
