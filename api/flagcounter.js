@@ -3,12 +3,10 @@
 //  Deploy path in the "dan-weather-proxy" repo:  /api/flagcounter.js
 //  After pasting → commit / Publish → Vercel redeploys automatically.
 //
-//  Scrapes FlagCounter (only Vercel's network can reach it reliably — the
-//  site's own web host times out on outbound requests to flagcounter.com)
-//  and pushes the result to flagcounter-cache-save.php on the site's own
-//  server, so visitors always read an instant local static file instead of
-//  hitting this function directly. Trigger this on a schedule via
-//  cron-job.org (e.g. every 15 min) to keep that file fresh.
+//  Scrapes FlagCounter and pushes the result to flagcounter-cache-save.php
+//  on the site's own server, so visitors read an instant static file.
+//  Diagnostic: /api/flagcounter?debug=il shows what FlagCounter returns
+//  for one country's detail page.
 // ─────────────────────────────────────────────────────────────
 
 const CODE  = 'Kyq';
@@ -27,7 +25,7 @@ async function getPrevCache() {
 async function getText(url, retries) {
   retries = retries == null ? 2 : retries;
   try {
-    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DanWeather/1.0)' } });
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' } });
     return r.text();
   } catch (e) {
     if (retries > 0) {
@@ -50,15 +48,18 @@ function parseTotals(html) {
   return totals;
 }
 
+// Returns { total, rows } — rows = how many day-lines were found. rows === 0
+// means the page didn't look like a detail page at all (format change or a
+// block page), which must NOT be treated as "0 visitors".
 function sumDays(html, days) {
-  const text = html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ');
-  const re = /(?:Today|Yesterday|[A-Z][a-z]{2,8}\s+\d{1,2},\s*\d{4})\s+([\d,]+)/g;
-  let m, total = 0, count = 0;
-  while ((m = re.exec(text)) && count < days) {
+  const text = html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+  const re = /(?:Today|Yesterday|[A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s*\d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\s+([\d,]+)/g;
+  let m, total = 0, rows = 0;
+  while ((m = re.exec(text)) && rows < days) {
     const n = parseInt(m[1].replace(/,/g, ''), 10);
-    if (!isNaN(n)) { total += n; count++; }
+    if (!isNaN(n)) { total += n; rows++; }
   }
-  return total;
+  return { total, rows };
 }
 
 function parseAvg30(html) {
@@ -69,6 +70,16 @@ function parseAvg30(html) {
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  // ── Diagnostic mode ──
+  const dbg = req.query && req.query.debug;
+  if (dbg) {
+    const cc = String(dbg).toLowerCase().replace(/[^a-z]/g, '').slice(0, 2) || 'il';
+    const h = await getText(`${HOST}/detail30/${cc}/${CODE}`, 0).catch((e) => 'FETCH ERROR: ' + e);
+    const text = h.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+                  .replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    return res.status(200).json({ country: cc, htmlLength: h.length, parsed30: sumDays(h, 30), textSample: text.slice(0, 1500) });
+  }
 
   try {
     const prev = await getPrevCache();
@@ -87,21 +98,27 @@ module.exports = async (req, res) => {
     const month30 = Object.assign({}, prev && prev.month30);
     const week7   = Object.assign({}, prev && prev.week7);
 
-    const toFetch = top.filter((cc) => fetchedOn[cc] !== today);
+    // Re-fetch a country if not fetched today, OR if its stored value is 0
+    // (0 may be a leftover from a failed parse, so keep retrying it).
+    const toFetch = top.filter((cc) => fetchedOn[cc] !== today || !month30[cc]);
+    let parsedOk = 0, parseFailed = 0;
 
     await Promise.all(toFetch.map(async (cc) => {
       try {
         const h = await getText(`${HOST}/detail30/${cc}/${CODE}`, 0);
-        month30[cc] = sumDays(h, 30);
-        week7[cc]   = sumDays(h, 7);
+        const m30 = sumDays(h, 30);
+        if (m30.rows === 0) { parseFailed++; return; } // keep previous value, retry next run
+        month30[cc] = m30.total;
+        week7[cc]   = sumDays(h, 7).total;
         fetchedOn[cc] = today;
-      } catch (e) { /* keep previous cached value for this country */ }
+        parsedOk++;
+      } catch (e) { parseFailed++; }
     }));
 
-    const result = { ok: true, totals, month30, week7, avg30, fetchedOn, updated: new Date().toISOString() };
+    const result = { ok: true, totals, month30, week7, avg30, fetchedOn, parsedOk, parseFailed, updated: new Date().toISOString() };
     res.status(200).json(result);
 
-    fetch('https://weather-dan.co.il/flagcounter-cache-save.php', {
+    fetch(CACHE_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(result),
