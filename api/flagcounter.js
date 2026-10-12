@@ -3,11 +3,13 @@
 //  Deploy path in the "dan-weather-proxy" repo:  /api/flagcounter.js
 //
 //  FlagCounter removed its per-country daily pages (Oct 2026), so 7/30-day
-//  figures are now computed here: once a day we store a snapshot of every
+//  figures are computed here: once a day we store a snapshot of every
 //  country's running total, and
 //     7 days  = total now − total 7 days ago
 //     30 days = total now − total 30 days ago
-//  Until enough history exists the value is null (shown as an empty cell).
+//  While history is still shorter than the window, the oldest snapshot is
+//  used instead and week7Days / month30Days report the real span, so the
+//  site can label the column honestly ("3 ימים" rather than "7 ימים").
 //  Result is pushed to flagcounter-cache-save.php for fast static reads.
 // ─────────────────────────────────────────────────────────────
 
@@ -58,6 +60,7 @@ function parseAvg30(html) {
 }
 
 const ilDate = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -84,21 +87,31 @@ module.exports = async (req, res) => {
     for (const d of Object.keys(snapshots)) if (d < cutoff) delete snapshots[d];
 
     const top = Object.keys(totals).sort((a, b) => totals[b] - totals[a]).slice(0, TOP_N);
-    function since(daysAgo) {
-      const snap = snapshots[ilDate(now - daysAgo * 86400000)];
+    const dates = Object.keys(snapshots).sort();
+
+    // Visits over a window: use the snapshot from exactly `window` days ago
+    // if we have it, otherwise the oldest one inside the window. Returns the
+    // values plus the span (in days) they really cover; span 0 → no data.
+    function since(window, minSpan) {
+      const target = ilDate(now - window * 86400000);
+      const base = dates.find((d) => d >= target && d < today);
+      const span = base ? daysBetween(base, today) : 0;
       const out = {};
       for (const cc of top) {
-        // No snapshot that old yet → null (empty cell), never a fake 0.
-        out[cc] = snap ? Math.max(0, totals[cc] - (snap[cc] || 0)) : null;
+        out[cc] = (span >= minSpan && base) ? Math.max(0, totals[cc] - (snapshots[base][cc] || 0)) : null;
       }
-      return out;
+      return { vals: out, span: span >= minSpan ? span : 0 };
     }
-    const week7   = since(7);
-    const month30 = since(30);
+    const w = since(7, 1);
+    // During the first week the 30-day figure would just repeat the 7-day one,
+    // so it only starts once it covers more than a week.
+    const m = since(30, 8);
 
     const result = {
-      ok: true, totals, month30, week7, avg30, snapshots,
-      historyDays: Object.keys(snapshots).length,
+      ok: true, totals, avg30, snapshots,
+      week7: w.vals,   week7Days: w.span,
+      month30: m.vals, month30Days: m.span,
+      historyDays: dates.length,
       updated: new Date().toISOString(),
     };
 
